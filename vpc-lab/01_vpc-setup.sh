@@ -329,9 +329,17 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         *) SN_TYPE="private" ;;
     esac
 
+    # ─── Benutzerdefinierte Ports ────────────────────────────────────────────
+    echo ""
+    echo -e "  ${BOLD}Zusaetzliche Ports freigeben${NC} (neben 80/HTTP und 22/SSH):"
+    echo -e "  ${YELLOW}Kommagetrennt eingeben, z.B.: 7777,8080,3000${NC}"
+    echo -e "  ${YELLOW}Leer lassen fuer keine zusaetzlichen Ports.${NC}"
+    read -rp "  Zusaetzliche Ports: " EXTRA_PORTS_INPUT
+
     SN_NAMES[$n]="$SN_NAME"
     SN_CIDRS[$n]="$SN_CIDR"
     SN_TYPES[$n]="$SN_TYPE"
+    SN_EXTRA_PORTS[$n]="$EXTRA_PORTS_INPUT"
 done
 
 # ─── Zusammenfassung ──────────────────────────────────────────────────────────
@@ -350,6 +358,9 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     echo -e "  Subnetz $n: ${CYAN}${SN_NAMES[$n]}${NC}  ${SN_CIDRS[$n]}  → $T"
     echo -e "    Security Group: sec-${SN_NAMES[$n]}"
     echo -e "    Route Table:    rt-${SN_NAMES[$n]}"
+    if [ -n "${SN_EXTRA_PORTS[$n]}" ]; then
+        echo -e "    Zusaetzliche Ports: ${CYAN}${SN_EXTRA_PORTS[$n]}${NC}"
+    fi
 done
 
 echo ""
@@ -461,16 +472,39 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
                 --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region "$REGION" > /dev/null
             aws ec2 authorize-security-group-ingress \
                 --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 --region "$REGION" > /dev/null
-            echo -e "  ${GREEN}✓ $SG_NAME${NC}: $SG_ID (Port 80+22 von ueberall)"
+            PORTS_MSG="Port 80+22 von ueberall"
         elif [ "${SN_TYPES[$n]}" == "none" ]; then
             echo -e "  ${YELLOW}✓ $SG_NAME${NC}: $SG_ID (keine Regeln - vollstaendig isoliert)"
+            SG_IDS[$n]="$SG_ID"
+            continue
         else
             aws ec2 authorize-security-group-ingress \
                 --group-id "$SG_ID" --protocol tcp --port 80 --cidr "$VPC_CIDR" --region "$REGION" > /dev/null
             aws ec2 authorize-security-group-ingress \
                 --group-id "$SG_ID" --protocol tcp --port 22 --cidr "$VPC_CIDR" --region "$REGION" > /dev/null
-            echo -e "  ${GREEN}✓ $SG_NAME${NC}: $SG_ID (Port 80+22 nur intern $VPC_CIDR)"
+            PORTS_MSG="Port 80+22 nur intern $VPC_CIDR"
         fi
+
+        # ─── Benutzerdefinierte Ports oeffnen ────────────────────────────────
+        if [ -n "${SN_EXTRA_PORTS[$n]}" ]; then
+            IFS=',' read -ra EP_ARR <<< "${SN_EXTRA_PORTS[$n]}"
+            for EP in "${EP_ARR[@]}"; do
+                EP=$(echo "$EP" | tr -d ' ')
+                if [[ "$EP" =~ ^[0-9]+$ ]] && [ "$EP" -ge 1 ] && [ "$EP" -le 65535 ]; then
+                    if [ "${SN_TYPES[$n]}" == "public" ]; then
+                        aws ec2 authorize-security-group-ingress \
+                            --group-id "$SG_ID" --protocol tcp --port "$EP" --cidr 0.0.0.0/0 --region "$REGION" > /dev/null
+                    else
+                        aws ec2 authorize-security-group-ingress \
+                            --group-id "$SG_ID" --protocol tcp --port "$EP" --cidr "$VPC_CIDR" --region "$REGION" > /dev/null
+                    fi
+                    PORTS_MSG="${PORTS_MSG}+${EP}"
+                else
+                    echo -e "  ${RED}Warnung: Port '$EP' uebersprungen (ungueltig)${NC}"
+                fi
+            done
+        fi
+        echo -e "  ${GREEN}✓ $SG_NAME${NC}: $SG_ID ($PORTS_MSG)"
         SG_IDS[$n]="$SG_ID"
     else
         rollback "Security Group '$SG_NAME' konnte nicht erstellt werden: $SG_ID"
@@ -488,6 +522,7 @@ done
         echo "SN_NAME_$n=${SN_NAMES[$n]}"
         echo "SN_CIDR_$n=${SN_CIDRS[$n]}"
         echo "SN_TYPE_$n=${SN_TYPES[$n]}"
+        echo "SN_EXTRA_PORTS_$n=${SN_EXTRA_PORTS[$n]}"
         echo "SUBNET_ID_$n=${SUBNET_IDS[$n]}"
         echo "RT_ID_$n=${RT_IDS[$n]}"
         echo "SG_ID_$n=${SG_IDS[$n]}"
@@ -505,4 +540,36 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
 done
 echo ""
 echo -e "${GREEN}IDs gespeichert in: $OUTPUT_FILE${NC}"
+echo ""
+
+# ─── Hinweis: Benutzerdefinierte Ports und httpd-Konfiguration ───────────
+HAS_EXTRA=false
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    [ -n "${SN_EXTRA_PORTS[$n]}" ] && HAS_EXTRA=true
+done
+
+if $HAS_EXTRA; then
+    echo -e "${BOLD}─── Hinweis: Benutzerdefinierte Ports ───────────────${NC}"
+    echo -e "  Die Security Groups erlauben jetzt Zugriff auf die zusaetzlichen Ports."
+    echo -e "  Damit httpd (Apache) auch auf einem benutzerdefinierten Port lauscht,"
+    echo -e "  muss die Konfiguration auf der EC2-Instanz angepasst werden:"
+    echo ""
+    echo -e "  ${CYAN}1. Per SSH verbinden:${NC}"
+    echo -e "     ssh -i <key>.pem ec2-user@<IP>"
+    echo ""
+    echo -e "  ${CYAN}2. httpd-Config bearbeiten:${NC}"
+    echo -e "     sudo nano /etc/httpd/conf/httpd.conf"
+    echo ""
+    echo -e "  ${CYAN}3. Zeile 'Listen 80' suchen und ergaenzen:${NC}"
+    echo -e "     Listen 80"
+    echo -e "     Listen 7777   ${YELLOW}# <- gewuenschten Port hinzufuegen${NC}"
+    echo ""
+    echo -e "  ${CYAN}4. httpd neu starten:${NC}"
+    echo -e "     sudo systemctl restart httpd"
+    echo ""
+    echo -e "  ${CYAN}5. Testen:${NC}"
+    echo -e "     curl http://<PUBLIC_IP>:7777"
+    echo ""
+fi
+
 echo -e "${YELLOW}Weiter mit: ./02_ec2-setup.sh${NC}"
