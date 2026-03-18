@@ -36,7 +36,13 @@ else
 fi
 
 if echo "$RESULT" | grep -q "BucketAlreadyOwnedByYou"; then
-    echo -e "  ${YELLOW}Bucket existiert bereits.${NC}"
+    echo -e "  ${YELLOW}Bucket gehoert dir bereits – wird weiterverwendet.${NC}"
+elif echo "$RESULT" | grep -q "BucketAlreadyExists"; then
+    echo -e "  ${RED}Fehler: Name '$BUCKET' ist bereits global vergeben.${NC}"
+    echo -e "  ${YELLOW}Tipp: S3-Namen sind weltweit eindeutig. Waehle z.B.:${NC}"
+    echo -e "  ${CYAN}  ${BUCKET}-$(date +%Y%m%d)${NC}"
+    echo -e "  ${CYAN}  mein-name-${BUCKET}${NC}"
+    exit 1
 elif echo "$RESULT" | grep -q "error\|Error"; then
     echo -e "  ${RED}Fehler: $RESULT${NC}"; exit 1
 else
