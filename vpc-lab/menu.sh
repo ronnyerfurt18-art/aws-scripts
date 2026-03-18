@@ -83,8 +83,10 @@ while true; do
     echo -e "      ${DIM}→ 04_deploy-content.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Netzwerk ────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[11]${NC} Security Groups verwalten"
-    echo -e "       ${DIM}→ 08_security-groups.sh  (Übersicht, Regeln add/remove)${NC}"
+    echo -e "  ${CYAN}[11]${NC} Security Groups verwalten  ${DIM}(Instanz-Ebene, stateful)${NC}"
+    echo -e "       ${DIM}→ 08_security-groups.sh${NC}"
+    echo -e "  ${CYAN}[12]${NC} Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
+    echo -e "       ${DIM}→ 09_network-acl.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
     echo -e "  ${CYAN}[7]${NC} Zugriffstests fuer Screenshots"
@@ -120,6 +122,7 @@ while true; do
         9)  bash "$SCRIPT_DIR/../s3-sync.sh" ;;
         10) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         11) bash "$SCRIPT_DIR/08_security-groups.sh" ;;
+        12) bash "$SCRIPT_DIR/09_network-acl.sh" ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
