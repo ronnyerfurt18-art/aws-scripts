@@ -18,36 +18,46 @@ REGION="${REGION:-us-east-1}"
 read -rp "Bucket-Name:      " BUCKET
 [ -z "$BUCKET" ] && echo -e "${RED}Fehler: Kein Name angegeben.${NC}" && exit 1
 
-echo ""
-echo -e "  Region: ${CYAN}$REGION${NC}"
-echo -e "  Bucket: ${CYAN}s3://$BUCKET${NC}"
+# Konto-ID fuer eindeutigen Vorschlag
+ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
+
 echo ""
 read -rp "Bucket anlegen? [j/N]: " CONFIRM
 [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && echo -e "${RED}Abgebrochen.${NC}" && exit 0
 echo ""
 
-# ─── 1. Bucket erstellen ──────────────────────────────────────────────────────
+# ─── 1. Bucket erstellen (mit Schleife bei Namenskonflikt) ────────────────────
 echo -e "${YELLOW}[1/3] Bucket erstellen...${NC}"
-if [ "$REGION" == "us-east-1" ]; then
-    RESULT=$(aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" 2>&1)
-else
-    RESULT=$(aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
-        --create-bucket-configuration LocationConstraint="$REGION" 2>&1)
-fi
+while true; do
+    echo -e "  Versuche: ${CYAN}s3://$BUCKET${NC}"
 
-if echo "$RESULT" | grep -q "BucketAlreadyOwnedByYou"; then
-    echo -e "  ${YELLOW}Bucket gehoert dir bereits – wird weiterverwendet.${NC}"
-elif echo "$RESULT" | grep -q "BucketAlreadyExists"; then
-    echo -e "  ${RED}Fehler: Name '$BUCKET' ist bereits global vergeben.${NC}"
-    echo -e "  ${YELLOW}Tipp: S3-Namen sind weltweit eindeutig. Waehle z.B.:${NC}"
-    echo -e "  ${CYAN}  ${BUCKET}-$(date +%Y%m%d)${NC}"
-    echo -e "  ${CYAN}  mein-name-${BUCKET}${NC}"
-    exit 1
-elif echo "$RESULT" | grep -q "error\|Error"; then
-    echo -e "  ${RED}Fehler: $RESULT${NC}"; exit 1
-else
-    echo -e "  ${GREEN}✓ Bucket erstellt${NC}"
-fi
+    if [ "$REGION" == "us-east-1" ]; then
+        RESULT=$(aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" 2>&1)
+    else
+        RESULT=$(aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
+            --create-bucket-configuration LocationConstraint="$REGION" 2>&1)
+    fi
+
+    if echo "$RESULT" | grep -q "BucketAlreadyOwnedByYou"; then
+        echo -e "  ${YELLOW}Bucket gehoert dir bereits – wird weiterverwendet.${NC}"
+        break
+    elif echo "$RESULT" | grep -q "BucketAlreadyExists"; then
+        SUGGESTION="${BUCKET}-${ACCOUNT_ID: -4}-$(date +%d%m)"
+        echo -e "  ${RED}✗ Name '$BUCKET' ist bereits global vergeben.${NC}"
+        echo -e "  ${YELLOW}Vorschlag: ${CYAN}$SUGGESTION${NC}"
+        read -rp "  Neuer Name [$SUGGESTION]: " NEW_BUCKET
+        BUCKET="${NEW_BUCKET:-$SUGGESTION}"
+    elif echo "$RESULT" | grep -q "InvalidBucketName\|invalid"; then
+        echo -e "  ${RED}✗ Ungültiger Name. Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt.${NC}"
+        read -rp "  Neuer Name: " BUCKET
+        [ -z "$BUCKET" ] && exit 1
+    elif echo "$RESULT" | grep -q "error\|Error"; then
+        echo -e "  ${RED}Fehler: $RESULT${NC}"; exit 1
+    else
+        echo -e "  ${GREEN}✓ Bucket erstellt${NC}"
+        break
+    fi
+done
 
 # ─── 2. Block Public Access deaktivieren ──────────────────────────────────────
 echo -e "${YELLOW}[2/3] Oeffentlichen Zugriff erlauben...${NC}"
