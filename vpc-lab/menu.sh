@@ -82,6 +82,10 @@ while true; do
     echo -e "  ${CYAN}[6]${NC} index.html per SSH deployen (nur public)"
     echo -e "      ${DIM}→ 04_deploy-content.sh${NC}"
     echo ""
+    echo -e "${BOLD}─── Netzwerk ────────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[11]${NC} Security Groups verwalten"
+    echo -e "       ${DIM}→ 08_security-groups.sh  (Übersicht, Regeln add/remove)${NC}"
+    echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
     echo -e "  ${CYAN}[7]${NC} Zugriffstests fuer Screenshots"
     echo -e "      ${DIM}→ 06_demo-screenshot.sh${NC}"
@@ -115,6 +119,7 @@ while true; do
         8)  bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
         9)  bash "$SCRIPT_DIR/../s3-sync.sh" ;;
         10) bash "$SCRIPT_DIR/05_teardown.sh" ;;
+        11) bash "$SCRIPT_DIR/08_security-groups.sh" ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
