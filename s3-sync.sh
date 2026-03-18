@@ -31,17 +31,20 @@ select_bucket() {
     local i=1
     local -a BL
     while IFS= read -r b; do
-        # Objektanzahl pro Bucket ermitteln
+        # Objektanzahl – aws s3 ls handled regional redirects automatically
         local COUNT
-        COUNT=$(aws s3api list-objects-v2 --bucket "$b" --query "KeyCount" --output text --region "$REGION" 2>/dev/null)
-        [ "$COUNT" == "None" ] || [ -z "$COUNT" ] && COUNT=0
+        COUNT=$(aws s3 ls "s3://$b/" --recursive 2>/dev/null | wc -l | tr -d ' ')
+        [ -z "$COUNT" ] && COUNT=0
         echo -e "  [${CYAN}$i${NC}] $b  ${YELLOW}($COUNT Objekte)${NC}" >&2
         BL[$i]="$b"
         ((i++))
     done <<< "$BUCKETS"
+    echo -e "  [${CYAN}0${NC}] Abbrechen" >&2
     echo "" >&2
 
     read -rp "  Bucket auswaehlen (Nummer): " SEL
+
+    [ "$SEL" == "0" ] && echo -e "${YELLOW}Abgebrochen.${NC}" >&2 && exit 0
 
     if [[ "$SEL" =~ ^[0-9]+$ ]] && [ "$SEL" -ge 1 ] && [ "$SEL" -lt "$i" ]; then
         local SELECTED_BUCKET="${BL[$SEL]}"
@@ -55,12 +58,12 @@ select_bucket() {
     echo -e "${CYAN}Inhalt von s3://$SELECTED_BUCKET :${NC}" >&2
 
     local FILES
-    FILES=$(aws s3 ls "s3://$SELECTED_BUCKET/" --recursive --human-readable --region "$REGION" 2>/dev/null | head -20)
+    FILES=$(aws s3 ls "s3://$SELECTED_BUCKET/" --recursive --human-readable 2>/dev/null | head -20)
 
     if [ -n "$FILES" ]; then
         local TOTAL
-        TOTAL=$(aws s3api list-objects-v2 --bucket "$SELECTED_BUCKET" --query "KeyCount" --output text --region "$REGION" 2>/dev/null)
-        [ "$TOTAL" == "None" ] || [ -z "$TOTAL" ] && TOTAL=0
+        TOTAL=$(aws s3 ls "s3://$SELECTED_BUCKET/" --recursive 2>/dev/null | wc -l | tr -d ' ')
+        [ -z "$TOTAL" ] && TOTAL=0
 
         echo "$FILES" | while IFS= read -r line; do
             echo -e "  $line" >&2
@@ -71,7 +74,9 @@ select_bucket() {
         fi
         echo -e "  ${GREEN}Gesamt: $TOTAL Objekte${NC}" >&2
     else
-        echo -e "  ${YELLOW}(leer)${NC}" >&2
+        echo -e "  ${YELLOW}(leer – falscher Bucket?)${NC}" >&2
+        read -rp "  Trotzdem fortfahren? [j/N]: " CONT >&2
+        [[ ! "$CONT" =~ ^[JjYy]$ ]] && echo -e "${YELLOW}Abgebrochen.${NC}" >&2 && exit 0
     fi
 
     echo "$SELECTED_BUCKET"
@@ -89,35 +94,26 @@ show_bucket_files() {
     echo "" >&2
     echo -e "${CYAN}Dateien in $S3_PATH :${NC}" >&2
 
+    # aws s3 ls handles regional redirects automatically (no --region needed)
     local RAW
-    RAW=$(aws s3api list-objects-v2 --bucket "$BUCKET_NAME" \
-        ${PREFIX:+--prefix "$PREFIX"} \
-        --query "Contents[].{Key:Key,Size:Size}" \
-        --output text --region "$REGION" 2>/dev/null)
+    RAW=$(aws s3 ls "$S3_PATH" --recursive --human-readable 2>/dev/null)
 
     BUCKET_FILES=()
     BUCKET_FILE_COUNT=0
 
-    if [ -z "$RAW" ] || [ "$RAW" == "None" ]; then
+    if [ -z "$RAW" ]; then
         echo -e "  ${YELLOW}(keine Dateien gefunden)${NC}" >&2
         return
     fi
 
     local j=1
-    while IFS=$'\t' read -r key size; do
-        [ -z "$key" ] && continue
-        # Groesse human-readable
-        local HR_SIZE
-        if [ "$size" -ge 1073741824 ] 2>/dev/null; then
-            HR_SIZE="$(echo "scale=1; $size/1073741824" | bc) GB"
-        elif [ "$size" -ge 1048576 ] 2>/dev/null; then
-            HR_SIZE="$(echo "scale=1; $size/1048576" | bc) MB"
-        elif [ "$size" -ge 1024 ] 2>/dev/null; then
-            HR_SIZE="$(echo "scale=1; $size/1024" | bc) KB"
-        else
-            HR_SIZE="${size} B"
-        fi
-        echo -e "  [${CYAN}$j${NC}] $key  ${YELLOW}($HR_SIZE)${NC}" >&2
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        # aws s3 ls --human-readable output: DATE TIME  SIZE UNIT  KEY
+        local key size_info
+        key=$(echo "$line" | awk '{print $NF}')
+        size_info=$(echo "$line" | awk '{print $3, $4}')
+        echo -e "  [${CYAN}$j${NC}] $key  ${YELLOW}($size_info)${NC}" >&2
         BUCKET_FILES[$j]="$key"
         ((j++))
     done <<< "$RAW"
