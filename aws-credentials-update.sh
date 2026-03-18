@@ -33,9 +33,9 @@ echo ""
 # Format 1: aws_access_key_id=...  oder  aws_access_key_id = ...
 # Format 2: export AWS_ACCESS_KEY_ID=...
 
-KEY_ID=$(echo "$INPUT" | grep -i "aws_access_key_id" | grep -o '[A-Z0-9]\{20\}')
-SECRET=$(echo "$INPUT" | grep -i "aws_secret_access_key" | sed 's/.*=[ ]*//' | tr -d ' \r\n')
-TOKEN=$(echo "$INPUT" | grep -i "aws_session_token" | sed 's/.*=[ ]*//' | tr -d ' \r\n')
+KEY_ID=$(echo "$INPUT" | grep -i "aws_access_key_id" | sed 's/^[^=]*=[ ]*//' | tr -d ' \r\n')
+SECRET=$(echo "$INPUT" | grep -i "aws_secret_access_key" | sed 's/^[^=]*=[ ]*//' | tr -d ' \r\n')
+TOKEN=$(echo "$INPUT" | grep -i "aws_session_token" | sed 's/^[^=]*=[ ]*//' | tr -d ' \r\n')
 
 # ─── Validierung ──────────────────────────────────────────────────────────────
 ERRORS=0
