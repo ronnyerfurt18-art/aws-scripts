@@ -1,0 +1,11 @@
+# AWS Credentials und Keys – niemals einchecken!
+*.pem
+*.key
+*credentials*
+
+# Generierte Env-Dateien mit AWS-IDs
+vpc-lab/01_output.env
+vpc-lab/02_output.env
+
+# macOS
+.DS_Store
