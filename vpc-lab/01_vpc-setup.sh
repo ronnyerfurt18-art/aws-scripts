@@ -13,6 +13,10 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/01_output.env"
 
+# Globale Konfiguration laden (Region, Key-Name)
+[ -f "$SCRIPT_DIR/config.env" ] && source "$SCRIPT_DIR/config.env"
+[ -z "$REGION" ] && REGION="us-east-1"
+
 # ─── Rollback-Funktion ────────────────────────────────────────────────────────
 rollback() {
     local MSG="$1"
@@ -157,8 +161,8 @@ echo -e "${BOLD}=== Schritt 1: VPC Setup ===${NC}"
 echo ""
 
 # ─── Parameter ────────────────────────────────────────────────────────────────
-read -rp "AWS Region             [us-east-1]:      " REGION
-REGION="${REGION:-us-east-1}"
+read -rp "AWS Region             [$REGION]:      " INPUT_REGION
+REGION="${INPUT_REGION:-$REGION}"
 
 while true; do
     read -rp "VPC CIDR               [10.16.3.0/24]:   " VPC_CIDR

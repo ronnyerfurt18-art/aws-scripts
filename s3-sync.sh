@@ -9,6 +9,11 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Globale Konfiguration laden (Region)
+[ -f "$SCRIPT_DIR/vpc-lab/config.env" ] && source "$SCRIPT_DIR/vpc-lab/config.env"
+[ -z "$REGION" ] && REGION="us-east-1"
+
 # ─── Hilfsfunktion: Bucket auswaehlen ────────────────────────────────────────
 # Zeigt Bucket-Liste an, laesst auswaehlen, zeigt Inhalt, gibt Name zurueck
 # Alle Anzeige geht nach stderr (&2), nur der Name nach stdout
@@ -147,8 +152,8 @@ esac
 
 # ─── Region ──────────────────────────────────────────────────────────────────
 echo ""
-read -rp "AWS Region             [us-east-1]:  " REGION
-REGION="${REGION:-us-east-1}"
+read -rp "AWS Region             [$REGION]:  " INPUT_REGION
+REGION="${INPUT_REGION:-$REGION}"
 
 # ─── Modus-spezifische Parameter ────────────────────────────────────────────
 

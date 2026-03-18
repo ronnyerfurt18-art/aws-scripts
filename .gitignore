@@ -8,5 +8,8 @@
 vpc-lab/01_output.env
 vpc-lab/02_output.env
 
+# Laufzeit-Dateien (lokal, nicht einchecken)
+vpc-lab/status.cache
+
 # macOS
 .DS_Store
