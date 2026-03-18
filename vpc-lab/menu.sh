@@ -153,53 +153,53 @@ while true; do
     echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
     echo -e "${BOLD}║           AWS VPC Lab – Hauptmenue              ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
-    echo -e "  Region: ${CYAN}$REGION${NC}   Key: ${CYAN}${KEY_NAME:-(nicht gesetzt)}${NC}   ${DIM}[13] aendern${NC}"
+    echo -e "  Region: ${CYAN}$REGION${NC}   Key: ${CYAN}${KEY_NAME:-(nicht gesetzt)}${NC}   ${DIM}[2] aendern${NC}"
     echo ""
     echo -e "${BOLD}─── Aktueller Status ────────────────────────────────${NC}"
     show_status
     echo ""
-    echo -e "${BOLD}─── AWS Session ─────────────────────────────────────${NC}"
+    echo -e "${BOLD}─── Vorbereitung ────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[1]${NC}  AWS Academy Credentials aktualisieren"
     echo -e "       ${DIM}→ Credentials aus Learner Lab einfuegen${NC}"
+    echo -e "  ${CYAN}[2]${NC}  Region + Key-Name konfigurieren"
+    echo -e "  ${CYAN}[3]${NC}  Key Pair erstellen / auswaehlen"
+    echo -e "       ${DIM}→ 00_create-keypair.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Setup ───────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[13]${NC} Region + Key-Name konfigurieren"
-    echo -e "  ${CYAN}[14]${NC} Key Pair erstellen / auswaehlen"
-    echo -e "       ${DIM}→ 00_create-keypair.sh${NC}"
-    echo -e "  ${CYAN}[2]${NC}  VPC + Subnetze + Security Groups erstellen"
-    echo -e "       ${DIM}→ 01_vpc-setup.sh${NC}"
-    echo -e "  ${CYAN}[3]${NC}  EC2 Instanzen starten"
+    echo -e "  ${CYAN}[4]${NC}  VPC + Subnetze + Security Groups erstellen"
+    echo -e "       ${DIM}→ 01_vpc-setup.sh  (Port 80 hier konfigurieren!)${NC}"
+    echo -e "  ${CYAN}[5]${NC}  EC2 Instanzen starten"
     echo -e "       ${DIM}→ 02_ec2-setup.sh${NC}"
     echo ""
-    echo -e "${BOLD}─── Informationen ───────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[4]${NC}  IPs und Status aller Instanzen anzeigen"
-    echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
-    echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
-    echo ""
     echo -e "${BOLD}─── Deployment ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[5]${NC}  httpd installieren + index.html auf allen Instanzen"
+    echo -e "  ${CYAN}[6]${NC}  httpd installieren + index.html  ${DIM}(benoetigt Port 80 offen)${NC}"
     echo -e "       ${DIM}→ 07_install-httpd.sh  (private via Jump Host)${NC}"
-    echo -e "  ${CYAN}[6]${NC}  index.html per SSH deployen (nur public)"
+    echo -e "  ${CYAN}[7]${NC}  index.html per SSH deployen (nur public)"
     echo -e "       ${DIM}→ 04_deploy-content.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Netzwerk ────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[11]${NC} Security Groups verwalten  ${DIM}(Instanz-Ebene, stateful)${NC}"
-    echo -e "       ${DIM}→ 08_security-groups.sh${NC}"
-    echo -e "  ${CYAN}[12]${NC} Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
+    echo -e "  ${CYAN}[8]${NC}  Security Groups verwalten  ${DIM}(Instanz-Ebene, stateful)${NC}"
+    echo -e "       ${DIM}→ 08_security-groups.sh  (Port 80 nachtraeglich aendern)${NC}"
+    echo -e "  ${CYAN}[9]${NC}  Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
     echo -e "       ${DIM}→ 09_network-acl.sh${NC}"
     echo ""
+    echo -e "${BOLD}─── Informationen ───────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[10]${NC} IPs und Status aller Instanzen anzeigen"
+    echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
+    echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
+    echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[7]${NC}  Zugriffstests fuer Screenshots"
+    echo -e "  ${CYAN}[11]${NC} Zugriffstests fuer Screenshots"
     echo -e "       ${DIM}→ 06_demo-screenshot.sh${NC}"
     echo ""
     echo -e "${BOLD}─── S3 ──────────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[8]${NC}  S3 Bucket anlegen (mit public Policy)"
+    echo -e "  ${CYAN}[12]${NC} S3 Bucket anlegen (mit public Policy)"
     echo -e "       ${DIM}→ ../s3-create-bucket.sh${NC}"
-    echo -e "  ${CYAN}[9]${NC}  Lokalen Ordner mit S3 Bucket synchronisieren"
+    echo -e "  ${CYAN}[13]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
     echo -e "       ${DIM}→ ../s3-sync.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[10]${NC} ${RED}Alle Ressourcen loeschen (Teardown)${NC}"
+    echo -e "  ${CYAN}[14]${NC} ${RED}Alle Ressourcen loeschen (Teardown)${NC}"
     echo -e "       ${DIM}→ 05_teardown.sh${NC}"
     echo ""
     echo -e "  ${CYAN}[0]${NC}  Beenden"
@@ -209,19 +209,19 @@ while true; do
 
     case "$CHOICE" in
         1)  bash "$SCRIPT_DIR/../aws-credentials-update.sh" ;;
-        2)  bash "$SCRIPT_DIR/01_vpc-setup.sh" ;;
-        3)  bash "$SCRIPT_DIR/02_ec2-setup.sh" ;;
-        4)  bash "$SCRIPT_DIR/03_get-ips.sh" ;;
-        5)  bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
-        6)  bash "$SCRIPT_DIR/04_deploy-content.sh" ;;
-        7)  bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
-        8)  bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
-        9)  bash "$SCRIPT_DIR/../s3-sync.sh" ;;
-        10) bash "$SCRIPT_DIR/05_teardown.sh" ;;
-        11) bash "$SCRIPT_DIR/08_security-groups.sh" ;;
-        12) bash "$SCRIPT_DIR/09_network-acl.sh" ;;
-        13) configure; sleep 1; continue ;;
-        14) bash "$SCRIPT_DIR/00_create-keypair.sh" ;;
+        2)  configure; sleep 1; continue ;;
+        3)  bash "$SCRIPT_DIR/00_create-keypair.sh" ;;
+        4)  bash "$SCRIPT_DIR/01_vpc-setup.sh" ;;
+        5)  bash "$SCRIPT_DIR/02_ec2-setup.sh" ;;
+        6)  bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
+        7)  bash "$SCRIPT_DIR/04_deploy-content.sh" ;;
+        8)  bash "$SCRIPT_DIR/08_security-groups.sh" ;;
+        9)  bash "$SCRIPT_DIR/09_network-acl.sh" ;;
+        10) bash "$SCRIPT_DIR/03_get-ips.sh" ;;
+        11) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
+        12) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
+        13) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
+        14) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;
