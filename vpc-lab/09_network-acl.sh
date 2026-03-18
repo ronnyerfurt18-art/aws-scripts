@@ -146,25 +146,72 @@ add_rule() {
     read -rp "  Auswahl [1]: " ACTION_SEL
     [ "${ACTION_SEL:-1}" == "2" ] && ACTION="deny" || ACTION="allow"
 
-    # Protokoll
-    echo -e "  Protokoll:"
-    echo -e "    [1] TCP"
-    echo -e "    [2] UDP"
-    echo -e "    [3] Alle"
-    read -rp "  Auswahl [1]: " PROTO_SEL
-    case "${PROTO_SEL:-1}" in
-        2) PROTO="17" ;;
-        3) PROTO="-1" ;;
-        *) PROTO="6" ;;
-    esac
+    # Typ-Auswahl wie in der AWS-Konsole
+    echo -e "  Typ:"
+    echo -e "    ${DIM}── Häufig verwendet ──────────────────${NC}"
+    echo -e "    [1]  All traffic          (alle Protokolle)"
+    echo -e "    [2]  All ICMP - IPv4      (Ping + alle ICMP-Nachrichten)"
+    echo -e "    [3]  Custom ICMP - IPv4   (bestimmter ICMP-Typ, z.B. Echo)"
+    echo -e "    [4]  SSH                  TCP 22"
+    echo -e "    [5]  HTTP                 TCP 80"
+    echo -e "    [6]  HTTPS                TCP 443"
+    echo -e "    [7]  RDP                  TCP 3389"
+    echo -e "    ${DIM}── Datenbanken ───────────────────────${NC}"
+    echo -e "    [8]  MySQL / Aurora        TCP 3306"
+    echo -e "    [9]  PostgreSQL            TCP 5432"
+    echo -e "    [10] MS SQL                TCP 1433"
+    echo -e "    ${DIM}── Benutzerdefiniert ─────────────────${NC}"
+    echo -e "    [11] Custom TCP            Port-Bereich"
+    echo -e "    [12] Custom UDP            Port-Bereich"
+    echo ""
+    read -rp "  Auswahl: " TYPE_SEL
 
-    PORT_ARGS=""
-    if [ "$PROTO" != "-1" ]; then
-        read -rp "  Von Port: " PORT_FROM
-        read -rp "  Bis Port [$PORT_FROM]: " PORT_TO
-        PORT_TO="${PORT_TO:-$PORT_FROM}"
-        PORT_ARGS="--port-range From=$PORT_FROM,To=$PORT_TO"
-    fi
+    PROTO="" ; PORT_ARGS="" ; ICMP_ARGS="" ; RULE_LABEL=""
+    case "${TYPE_SEL}" in
+        1)  PROTO="-1";  RULE_LABEL="All traffic" ;;
+        2)  PROTO="1";   ICMP_ARGS="--icmp-type-code Type=-1,Code=-1"; RULE_LABEL="All ICMP - IPv4" ;;
+        3)  PROTO="1"
+            echo ""
+            echo -e "  ICMP-Typ:"
+            echo -e "    [1] Echo Request  (Ping senden,  Type 8)"
+            echo -e "    [2] Echo Reply    (Ping Antwort, Type 0)"
+            echo -e "    [3] Destination Unreachable (Type 3)"
+            echo -e "    [4] Time Exceeded (Traceroute, Type 11)"
+            echo -e "    [5] Custom"
+            read -rp "  Auswahl [1]: " ICMP_SEL
+            case "${ICMP_SEL:-1}" in
+                1) ICMP_T="8";  ICMP_C="-1"; RULE_LABEL="ICMP Echo Request (Ping)" ;;
+                2) ICMP_T="0";  ICMP_C="-1"; RULE_LABEL="ICMP Echo Reply" ;;
+                3) ICMP_T="3";  ICMP_C="-1"; RULE_LABEL="ICMP Destination Unreachable" ;;
+                4) ICMP_T="11"; ICMP_C="-1"; RULE_LABEL="ICMP Time Exceeded" ;;
+                5) read -rp "  ICMP Type (0-255): " ICMP_T
+                   read -rp "  ICMP Code [-1=alle]: " ICMP_C
+                   ICMP_C="${ICMP_C:--1}"
+                   RULE_LABEL="Custom ICMP Type $ICMP_T Code $ICMP_C" ;;
+                *) ICMP_T="8"; ICMP_C="-1"; RULE_LABEL="ICMP Echo Request (Ping)" ;;
+            esac
+            ICMP_ARGS="--icmp-type-code Type=$ICMP_T,Code=$ICMP_C" ;;
+        4)  PROTO="6";  PORT_ARGS="--port-range From=22,To=22";   RULE_LABEL="SSH (TCP 22)" ;;
+        5)  PROTO="6";  PORT_ARGS="--port-range From=80,To=80";   RULE_LABEL="HTTP (TCP 80)" ;;
+        6)  PROTO="6";  PORT_ARGS="--port-range From=443,To=443"; RULE_LABEL="HTTPS (TCP 443)" ;;
+        7)  PROTO="6";  PORT_ARGS="--port-range From=3389,To=3389"; RULE_LABEL="RDP (TCP 3389)" ;;
+        8)  PROTO="6";  PORT_ARGS="--port-range From=3306,To=3306"; RULE_LABEL="MySQL/Aurora (TCP 3306)" ;;
+        9)  PROTO="6";  PORT_ARGS="--port-range From=5432,To=5432"; RULE_LABEL="PostgreSQL (TCP 5432)" ;;
+        10) PROTO="6";  PORT_ARGS="--port-range From=1433,To=1433"; RULE_LABEL="MS SQL (TCP 1433)" ;;
+        11) PROTO="6"
+            read -rp "  Von Port: " PORT_FROM
+            read -rp "  Bis Port [$PORT_FROM]: " PORT_TO
+            PORT_TO="${PORT_TO:-$PORT_FROM}"
+            PORT_ARGS="--port-range From=$PORT_FROM,To=$PORT_TO"
+            RULE_LABEL="Custom TCP $PORT_FROM${PORT_TO:+-$PORT_TO}" ;;
+        12) PROTO="17"
+            read -rp "  Von Port: " PORT_FROM
+            read -rp "  Bis Port [$PORT_FROM]: " PORT_TO
+            PORT_TO="${PORT_TO:-$PORT_FROM}"
+            PORT_ARGS="--port-range From=$PORT_FROM,To=$PORT_TO"
+            RULE_LABEL="Custom UDP $PORT_FROM${PORT_TO:+-$PORT_TO}" ;;
+        *)  echo -e "${RED}Ungültige Auswahl.${NC}"; return ;;
+    esac
 
     # CIDR
     echo -e "  CIDR:"
@@ -182,7 +229,7 @@ add_rule() {
     [ "$ACTION" == "allow" ] && ACT_LABEL="${GREEN}ALLOW${NC}" || ACT_LABEL="${RED}DENY${NC}"
 
     echo ""
-    echo -e "  Neue Regel: $DIR_LABEL  Regel $RULE_NR  $ACT_LABEL  Protokoll $PROTO  $CIDR  $PORT_ARGS"
+    echo -e "  Neue Regel: $DIR_LABEL  Regel $RULE_NR  $ACT_LABEL  ${CYAN}$RULE_LABEL${NC}  von/nach  ${CYAN}$CIDR${NC}"
     read -rp "  Hinzufügen? [j/N]: " CONFIRM
     [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && return
 
@@ -193,7 +240,7 @@ add_rule() {
         --rule-action "$ACTION" \
         --cidr-block "$CIDR" \
         $( [ "$EGRESS" == "true" ] && echo "--egress" || echo "--ingress" ) \
-        $PORT_ARGS \
+        $PORT_ARGS $ICMP_ARGS \
         --region "$REGION" 2>&1)
 
     if echo "$RESULT" | grep -q "NetworkAclEntryAlreadyExists"; then
@@ -201,7 +248,7 @@ add_rule() {
     elif echo "$RESULT" | grep -q "error\|Error"; then
         echo -e "  ${RED}Fehler: $RESULT${NC}"
     else
-        echo -e "  ${GREEN}✓ Regel $RULE_NR hinzugefügt${NC}"
+        echo -e "  ${GREEN}✓ Regel $RULE_NR ($RULE_LABEL) hinzugefügt${NC}"
     fi
 }
 

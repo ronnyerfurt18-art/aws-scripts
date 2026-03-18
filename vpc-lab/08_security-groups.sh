@@ -112,31 +112,80 @@ add_rule() {
     select_sg || return
 
     echo -e "${BOLD}─── Neue Inbound-Regel ──────────────────────────────${NC}"
+    echo -e "${DIM}  (entspricht AWS Konsole → Security Groups → Inbound rules)${NC}"
     echo ""
 
-    echo -e "  Protokoll:"
-    echo -e "    [1] TCP"
-    echo -e "    [2] UDP"
-    echo -e "    [3] Alle (all traffic)"
-    read -rp "  Auswahl [1]: " PROTO_SEL
-    case "${PROTO_SEL:-1}" in
-        2) PROTO="udp" ;;
-        3) PROTO="-1" ;;
-        *) PROTO="tcp" ;;
+    # Typ-Auswahl wie in der AWS-Konsole
+    echo -e "  Typ:"
+    echo -e "    ${DIM}── Häufig verwendet ──────────────────${NC}"
+    echo -e "    [1]  All traffic          (alle Protokolle + Ports)"
+    echo -e "    [2]  All ICMP - IPv4      (Ping + alle ICMP-Nachrichten)"
+    echo -e "    [3]  Custom ICMP - IPv4   (bestimmter ICMP-Typ, z.B. Echo)"
+    echo -e "    [4]  SSH                  TCP 22"
+    echo -e "    [5]  HTTP                 TCP 80"
+    echo -e "    [6]  HTTPS                TCP 443"
+    echo -e "    [7]  RDP                  TCP 3389"
+    echo -e "    ${DIM}── Datenbanken ───────────────────────${NC}"
+    echo -e "    [8]  MySQL / Aurora        TCP 3306"
+    echo -e "    [9]  PostgreSQL            TCP 5432"
+    echo -e "    [10] MS SQL                TCP 1433"
+    echo -e "    ${DIM}── Benutzerdefiniert ─────────────────${NC}"
+    echo -e "    [11] Custom TCP            eigener Port"
+    echo -e "    [12] Custom UDP            eigener Port"
+    echo ""
+    read -rp "  Auswahl: " TYPE_SEL
+
+    PROTO="" ; PORT="" ; ICMP_TYPE="" ; ICMP_CODE="" ; RULE_LABEL=""
+    case "${TYPE_SEL}" in
+        1)  PROTO="-1";                                    RULE_LABEL="All traffic" ;;
+        2)  PROTO="icmp"; ICMP_TYPE="-1"; ICMP_CODE="-1"; RULE_LABEL="All ICMP" ;;
+        3)  PROTO="icmp"
+            echo ""
+            echo -e "  ICMP-Typ:"
+            echo -e "    [1] Echo Request  (Ping senden,  Type 8)"
+            echo -e "    [2] Echo Reply    (Ping Antwort, Type 0)"
+            echo -e "    [3] Destination Unreachable (Type 3)"
+            echo -e "    [4] Time Exceeded (Traceroute, Type 11)"
+            echo -e "    [5] Custom"
+            read -rp "  Auswahl [1]: " ICMP_SEL
+            case "${ICMP_SEL:-1}" in
+                1) ICMP_TYPE="8";  ICMP_CODE="-1"; RULE_LABEL="ICMP Echo Request (Ping)" ;;
+                2) ICMP_TYPE="0";  ICMP_CODE="-1"; RULE_LABEL="ICMP Echo Reply" ;;
+                3) ICMP_TYPE="3";  ICMP_CODE="-1"; RULE_LABEL="ICMP Destination Unreachable" ;;
+                4) ICMP_TYPE="11"; ICMP_CODE="-1"; RULE_LABEL="ICMP Time Exceeded" ;;
+                5) read -rp "  ICMP Type (0-255): " ICMP_TYPE
+                   read -rp "  ICMP Code [-1=alle]: " ICMP_CODE
+                   ICMP_CODE="${ICMP_CODE:--1}"
+                   RULE_LABEL="Custom ICMP Type $ICMP_TYPE Code $ICMP_CODE" ;;
+            esac ;;
+        4)  PROTO="tcp"; PORT="22";   RULE_LABEL="SSH (TCP 22)" ;;
+        5)  PROTO="tcp"; PORT="80";   RULE_LABEL="HTTP (TCP 80)" ;;
+        6)  PROTO="tcp"; PORT="443";  RULE_LABEL="HTTPS (TCP 443)" ;;
+        7)  PROTO="tcp"; PORT="3389"; RULE_LABEL="RDP (TCP 3389)" ;;
+        8)  PROTO="tcp"; PORT="3306"; RULE_LABEL="MySQL/Aurora (TCP 3306)" ;;
+        9)  PROTO="tcp"; PORT="5432"; RULE_LABEL="PostgreSQL (TCP 5432)" ;;
+        10) PROTO="tcp"; PORT="1433"; RULE_LABEL="MS SQL (TCP 1433)" ;;
+        11) PROTO="tcp"
+            read -rp "  Port: " PORT
+            if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+                echo -e "${RED}Ungültiger Port.${NC}"; return
+            fi
+            RULE_LABEL="Custom TCP $PORT" ;;
+        12) PROTO="udp"
+            read -rp "  Port: " PORT
+            if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+                echo -e "${RED}Ungültiger Port.${NC}"; return
+            fi
+            RULE_LABEL="Custom UDP $PORT" ;;
+        *)  echo -e "${RED}Ungültige Auswahl.${NC}"; return ;;
     esac
 
-    if [ "$PROTO" != "-1" ]; then
-        read -rp "  Port (z.B. 80, 443, 3306): " PORT
-        if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-            echo -e "${RED}Ungültiger Port.${NC}"; return
-        fi
-    fi
-
+    # Quelle
     echo ""
     echo -e "  Quelle:"
-    echo -e "    [1] Überall (0.0.0.0/0)"
-    echo -e "    [2] Nur aus VPC ($VPC_CIDR)"
-    echo -e "    [3] Eigene CIDR eingeben"
+    echo -e "    [1] Anywhere-IPv4  (0.0.0.0/0)"
+    echo -e "    [2] My IP          (nur dein aktuelles Netz – VPC: $VPC_CIDR)"
+    echo -e "    [3] Custom CIDR    (eigene Eingabe)"
     read -rp "  Auswahl [1]: " CIDR_SEL
     case "${CIDR_SEL:-1}" in
         2) CIDR="$VPC_CIDR" ;;
@@ -145,24 +194,25 @@ add_rule() {
     esac
 
     echo ""
+    echo -e "  Neue Regel: ${CYAN}$RULE_LABEL${NC}  von  ${CYAN}$CIDR${NC}"
+    read -rp "  Hinzufügen? [j/N]: " CONFIRM
+    [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && return
+
+    # AWS CLI Aufruf je nach Protokoll
     if [ "$PROTO" == "-1" ]; then
-        echo -e "  Regel: Alle Protokolle  von  $CIDR"
-        read -rp "  Hinzufügen? [j/N]: " CONFIRM
-        [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && return
         RESULT=$(aws ec2 authorize-security-group-ingress \
-            --group-id "$SELECTED_SG_ID" \
-            --protocol -1 \
+            --group-id "$SELECTED_SG_ID" --protocol -1 --cidr "$CIDR" \
+            --region "$REGION" 2>&1)
+    elif [ "$PROTO" == "icmp" ]; then
+        RESULT=$(aws ec2 authorize-security-group-ingress \
+            --group-id "$SELECTED_SG_ID" --protocol icmp \
+            --port "$ICMP_TYPE" \
             --cidr "$CIDR" \
             --region "$REGION" 2>&1)
     else
-        echo -e "  Regel: $PROTO Port $PORT  von  $CIDR"
-        read -rp "  Hinzufügen? [j/N]: " CONFIRM
-        [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && return
         RESULT=$(aws ec2 authorize-security-group-ingress \
-            --group-id "$SELECTED_SG_ID" \
-            --protocol "$PROTO" \
-            --port "$PORT" \
-            --cidr "$CIDR" \
+            --group-id "$SELECTED_SG_ID" --protocol "$PROTO" \
+            --port "$PORT" --cidr "$CIDR" \
             --region "$REGION" 2>&1)
     fi
 
@@ -171,7 +221,7 @@ add_rule() {
     elif echo "$RESULT" | grep -q "error\|Error"; then
         echo -e "  ${RED}Fehler: $RESULT${NC}"
     else
-        echo -e "  ${GREEN}✓ Regel hinzugefügt${NC}"
+        echo -e "  ${GREEN}✓ $RULE_LABEL hinzugefügt${NC}"
     fi
 }
 
