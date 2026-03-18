@@ -62,6 +62,10 @@ while true; do
     echo -e "${BOLD}─── Aktueller Status ────────────────────────────────${NC}"
     show_status
     echo ""
+    echo -e "${BOLD}─── AWS Session ─────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[9]${NC} AWS Academy Credentials aktualisieren"
+    echo -e "      ${DIM}→ Credentials aus Learner Lab einfuegen + automatisch speichern${NC}"
+    echo ""
     echo -e "${BOLD}─── Setup ───────────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[1]${NC} VPC + Subnetze + Security Groups erstellen"
     echo -e "      ${DIM}→ 01_vpc-setup.sh${NC}"
@@ -107,6 +111,7 @@ while true; do
         6) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
         7) bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
         8) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
+        9) bash "$SCRIPT_DIR/../aws-credentials-update.sh" ;;
         0) echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *) echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
