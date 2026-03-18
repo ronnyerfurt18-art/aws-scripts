@@ -85,6 +85,10 @@ while true; do
     echo -e "      ${DIM}  Test 2: curl auf public  → klappt${NC}"
     echo -e "      ${DIM}  Test 3: curl via Jump Host auf private → klappt${NC}"
     echo ""
+    echo -e "${BOLD}─── S3 ──────────────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[8]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
+    echo -e "      ${DIM}→ ../s3-sync.sh  (Bucket erstellen + public Policy + sync)${NC}"
+    echo ""
     echo -e "${BOLD}─── Aufraumen ───────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[5]${NC} ${RED}Alle Ressourcen loeschen (Teardown)${NC}"
     echo -e "      ${DIM}→ 05_teardown.sh${NC}"
@@ -102,6 +106,7 @@ while true; do
         5) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         6) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
         7) bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
+        8) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
         0) echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *) echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
