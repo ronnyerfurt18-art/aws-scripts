@@ -89,8 +89,6 @@ show_status() {
                 IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"; SN_TYPE_VAR="SN_TYPE_$n"
                 IID="${!IID_VAR}"
                 [ -z "$IID" ] && continue
-                STATE="${!CACHE_STATE_$n:-?}"
-                # Bash indirect reference fuer dynamische Variablen
                 STATE_VAR="CACHE_STATE_$n"; PUB_VAR="CACHE_PUB_$n"; PRIV_VAR="CACHE_PRIV_$n"
                 STATE="${!STATE_VAR:-?}"; PUB="${!PUB_VAR}"; PRIV="${!PRIV_VAR}"
                 [ "$STATE" == "running" ] && S="${GREEN}●${NC}" || S="${RED}●${NC}"
