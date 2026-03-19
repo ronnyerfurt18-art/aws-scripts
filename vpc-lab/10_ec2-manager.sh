@@ -144,13 +144,58 @@ create_instance() {
         *) INSTANCE_TYPE="t2.micro" ;;
     esac
 
-    # Key Pair
+    # Key Pair – vorhandene anzeigen und auswaehlen
     echo ""
-    KP_DEFAULT="${KEY_NAME:-(nicht gesetzt)}"
-    read -rp "  Key Pair Name [$KP_DEFAULT]: " KP_INPUT
-    KP_NAME="${KP_INPUT:-$KEY_NAME}"
-    if [ -z "$KP_NAME" ]; then
-        echo -e "${RED}Kein Key Pair angegeben.${NC}"; return
+    echo -e "  ${BOLD}Key Pair:${NC}"
+    KP_RAW=$(aws ec2 describe-key-pairs \
+        --query "KeyPairs[].KeyName" \
+        --output text --region "$REGION" 2>/dev/null | tr '\t' '\n' | grep -v '^$')
+
+    if [ -z "$KP_RAW" ]; then
+        echo -e "  ${YELLOW}Keine Key Pairs in Region $REGION gefunden.${NC}"
+        echo -e "  ${DIM}Bitte zuerst unter Menue-Punkt [3] ein Key Pair erstellen.${NC}"
+        echo ""
+        read -rp "  Zum Menue zurueck? [j] oder Key-Name manuell eingeben: " KP_INPUT
+        if [[ "$KP_INPUT" =~ ^[JjYy]$ ]] || [ -z "$KP_INPUT" ]; then
+            return
+        fi
+        KP_NAME="$KP_INPUT"
+    else
+        declare -a KP_ARR
+        local i=1
+        while IFS= read -r kp; do
+            [ -z "$kp" ] && continue
+            PEM_LABEL=""
+            [ -f "$SCRIPT_DIR/${kp}.pem" ] && PEM_LABEL="${GREEN} ✓ .pem vorhanden${NC}"
+            ACTIVE_LABEL=""
+            [ "$kp" == "$KEY_NAME" ] && ACTIVE_LABEL="${CYAN} [aktiv]${NC}"
+            echo -e "    [${CYAN}$i${NC}] $kp$PEM_LABEL$ACTIVE_LABEL"
+            KP_ARR[$i]="$kp"
+            ((i++))
+        done <<< "$KP_RAW"
+
+        # Vorauswahl: aktiver Key aus config.env
+        DEFAULT_IDX=""
+        for j in "${!KP_ARR[@]}"; do
+            [ "${KP_ARR[$j]}" == "$KEY_NAME" ] && DEFAULT_IDX=$j && break
+        done
+
+        echo ""
+        read -rp "  Auswahl [${DEFAULT_IDX:-1}]: " KP_SEL
+        KP_SEL="${KP_SEL:-${DEFAULT_IDX:-1}}"
+
+        if [[ "$KP_SEL" =~ ^[0-9]+$ ]] && [ -n "${KP_ARR[$KP_SEL]}" ]; then
+            KP_NAME="${KP_ARR[$KP_SEL]}"
+        else
+            echo -e "  ${RED}Ungueltige Auswahl.${NC}"; return
+        fi
+
+        # Warnung wenn .pem fehlt
+        if [ ! -f "$SCRIPT_DIR/${KP_NAME}.pem" ]; then
+            echo -e "  ${YELLOW}⚠  .pem fuer '$KP_NAME' nicht lokal gefunden – SSH spaeter nicht moeglich.${NC}"
+            read -rp "  Trotzdem fortfahren? [j/N]: " CONT
+            [[ ! "$CONT" =~ ^[JjYy]$ ]] && return
+        fi
     fi
 
     # VPC / Subnetz
