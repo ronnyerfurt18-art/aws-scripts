@@ -377,48 +377,98 @@ connection_info() {
     if [ "$SELECTED_PLATFORM" == "Linux" ]; then
         PEM_FILE="$SCRIPT_DIR/${KEY_NAME}.pem"
         [ ! -f "$PEM_FILE" ] && PEM_FILE="${KEY_NAME}.pem"
-        echo -e "  ${BOLD}SSH-Verbindung (Linux-Terminal auf deinem Mac):${NC}"
-        echo -e "  ${CYAN}ssh -i $PEM_FILE ec2-user@$PUB${NC}"
-        echo ""
-        echo -e "  ${BOLD}Erklaerung:${NC}"
-        echo -e "  ${DIM}  ssh          → Programm fuer verschluesselte Fernverbindung${NC}"
-        echo -e "  ${DIM}  -i           → 'identity file', gibt den privaten Schluessel an${NC}"
-        echo -e "  ${DIM}  $PEM_FILE${NC}"
-        echo -e "  ${DIM}               → deine .pem-Datei (privater Schluessel, nur du hast sie)${NC}"
-        echo -e "  ${DIM}  ec2-user     → Standard-Benutzername auf Amazon Linux${NC}"
-        echo -e "  ${DIM}  $PUB${NC}"
-        echo -e "  ${DIM}               → oeffentliche IP-Adresse der Instanz${NC}"
-        echo ""
-        echo -e "  ${BOLD}Wo ausfuehren:${NC}"
-        echo -e "  ${DIM}  Terminal auf deinem Mac (nicht in AWS).${NC}"
-        echo -e "  ${DIM}  Terminal oeffnen: Finder → Programme → Dienstprogramme → Terminal${NC}"
-        echo -e "  ${DIM}  Oder: Spotlight (Cmd+Leertaste) → 'Terminal' eingeben${NC}"
+
+        # ─── Port 22 in SG pruefen ────────────────────────────────────────────
+        SG_IDS=$(aws ec2 describe-instances --instance-ids "$SELECTED_IID" \
+            --query "Reservations[0].Instances[0].SecurityGroups[].GroupId" \
+            --output text --region "$REGION" 2>/dev/null | tr '\t' ' ')
+
+        PORT22_OPEN=false
+        for SG_ID in $SG_IDS; do
+            MATCH=$(aws ec2 describe-security-groups --group-ids "$SG_ID" \
+                --query "SecurityGroups[0].IpPermissions[?FromPort<=\`22\` && ToPort>=\`22\` && IpProtocol==\`tcp\`].IpRanges[].CidrIp" \
+                --output text --region "$REGION" 2>/dev/null)
+            [ -n "$MATCH" ] && PORT22_OPEN=true && break
+        done
+
+        if $PORT22_OPEN; then
+            echo -e "  ${GREEN}✓ Port 22 (SSH) ist in der Security Group offen${NC}"
+            echo ""
+            echo -e "  ${BOLD}SSH-Befehl – ausfuehren im Mac-Terminal:${NC}"
+            echo -e "  ${CYAN}ssh -i $PEM_FILE ec2-user@$PUB${NC}"
+            echo ""
+            echo -e "  ${BOLD}Erklaerung:${NC}"
+            echo -e "  ${DIM}  ssh      → verschluesselte Fernverbindung zum Server${NC}"
+            echo -e "  ${DIM}  -i       → gibt den privaten Schluessel an (identity file)${NC}"
+            echo -e "  ${DIM}  *.pem    → deine Schluessel-Datei, nur du besitzt sie${NC}"
+            echo -e "  ${DIM}  ec2-user → Standardbenutzer auf Amazon Linux${NC}"
+            echo -e "  ${DIM}  $PUB → oeffentliche IP der Instanz${NC}"
+            echo ""
+            echo -e "  ${BOLD}Wo ausfuehren:${NC}"
+            echo -e "  ${DIM}  Auf deinem Mac im Terminal (nicht in AWS).${NC}"
+            echo -e "  ${DIM}  Terminal oeffnen: Cmd+Leertaste → 'Terminal' tippen → Enter${NC}"
+        else
+            echo -e "  ${RED}✗ Port 22 (SSH) ist in der Security Group NICHT offen${NC}"
+            echo -e "  ${DIM}  Eine Verbindung wuerde mit 'Operation timed out' scheitern.${NC}"
+            echo ""
+            echo -e "  ${BOLD}Port 22 oeffnen:${NC}"
+            echo -e "  ${YELLOW}→ Menue [9] Security Groups${NC}"
+            echo -e "  ${DIM}  Auswahl: Security Group der Instanz waehlen${NC}"
+            echo -e "  ${DIM}  → Regel hinzufuegen → [4] SSH (TCP 22) → Quelle: Anywhere${NC}"
+            echo ""
+            echo -e "  ${DIM}  Danach hier nochmal aufrufen – SSH-Befehl wird dann angezeigt.${NC}"
+        fi
     else
-        echo -e "  ${BOLD}RDP-Verbindung:${NC}"
-        echo -e "  Host:  ${CYAN}$PUB${NC}"
-        echo -e "  Port:  ${CYAN}3389${NC}"
-        echo -e "  User:  ${CYAN}Administrator${NC}"
-        echo ""
-        echo -e "  ${BOLD}Windows-Passwort abrufen:${NC}"
         PEM_FILE="$SCRIPT_DIR/${KEY_NAME}.pem"
-        if [ -f "$PEM_FILE" ]; then
-            echo -e "  ${YELLOW}Lade verschluesseltes Passwort...${NC}"
-            PW_ENC=$(aws ec2 get-password-data --instance-id "$SELECTED_IID" \
-                --query "PasswordData" --output text --region "$REGION" 2>/dev/null)
-            if [ -z "$PW_ENC" ] || [ "$PW_ENC" == "None" ]; then
-                echo -e "  ${YELLOW}Passwort noch nicht verfuegbar – bitte 10-15 Min nach Start warten.${NC}"
-            else
-                PW=$(echo "$PW_ENC" | base64 --decode | openssl rsautl -decrypt -inkey "$PEM_FILE" 2>/dev/null)
-                if [ -n "$PW" ]; then
-                    echo -e "  Passwort: ${CYAN}$PW${NC}"
+
+        # ─── Port 3389 in SG pruefen ──────────────────────────────────────────
+        SG_IDS=$(aws ec2 describe-instances --instance-ids "$SELECTED_IID" \
+            --query "Reservations[0].Instances[0].SecurityGroups[].GroupId" \
+            --output text --region "$REGION" 2>/dev/null | tr '\t' ' ')
+
+        PORT3389_OPEN=false
+        for SG_ID in $SG_IDS; do
+            MATCH=$(aws ec2 describe-security-groups --group-ids "$SG_ID" \
+                --query "SecurityGroups[0].IpPermissions[?FromPort<=\`3389\` && ToPort>=\`3389\` && IpProtocol==\`tcp\`].IpRanges[].CidrIp" \
+                --output text --region "$REGION" 2>/dev/null)
+            [ -n "$MATCH" ] && PORT3389_OPEN=true && break
+        done
+
+        if $PORT3389_OPEN; then
+            echo -e "  ${GREEN}✓ Port 3389 (RDP) ist in der Security Group offen${NC}"
+            echo ""
+            echo -e "  ${BOLD}RDP-Verbindung:${NC}"
+            echo -e "  Host:  ${CYAN}$PUB${NC}"
+            echo -e "  Port:  ${CYAN}3389${NC}"
+            echo -e "  User:  ${CYAN}Administrator${NC}"
+            echo ""
+            echo -e "  ${DIM}  Mac: Microsoft Remote Desktop (App Store) → Neue Verbindung${NC}"
+            echo ""
+            echo -e "  ${BOLD}Windows-Passwort:${NC}"
+            if [ -f "$PEM_FILE" ]; then
+                echo -e "  ${YELLOW}Lade verschluesseltes Passwort...${NC}"
+                PW_ENC=$(aws ec2 get-password-data --instance-id "$SELECTED_IID" \
+                    --query "PasswordData" --output text --region "$REGION" 2>/dev/null)
+                if [ -z "$PW_ENC" ] || [ "$PW_ENC" == "None" ]; then
+                    echo -e "  ${YELLOW}Noch nicht verfuegbar – bitte 10-15 Min nach Start warten.${NC}"
                 else
-                    echo -e "  ${DIM}openssl-Entschluesselung fehlgeschlagen. Manuell:${NC}"
-                    echo -e "  ${CYAN}aws ec2 get-password-data --instance-id $SELECTED_IID --priv-launch-key $PEM_FILE --region $REGION${NC}"
+                    PW=$(echo "$PW_ENC" | base64 --decode | openssl rsautl -decrypt -inkey "$PEM_FILE" 2>/dev/null)
+                    [ -n "$PW" ] \
+                        && echo -e "  Passwort: ${CYAN}$PW${NC}" \
+                        || echo -e "  ${DIM}Entschluesselung fehlgeschlagen – PEM-Datei pruefen.${NC}"
                 fi
+            else
+                echo -e "  ${YELLOW}PEM-Datei nicht gefunden: $PEM_FILE${NC}"
             fi
         else
-            echo -e "  ${YELLOW}PEM-Datei nicht gefunden: $PEM_FILE${NC}"
-            echo -e "  ${DIM}Manuell: aws ec2 get-password-data --instance-id $SELECTED_IID --priv-launch-key <PEM> --region $REGION${NC}"
+            echo -e "  ${RED}✗ Port 3389 (RDP) ist in der Security Group NICHT offen${NC}"
+            echo -e "  ${DIM}  Eine Verbindung wuerde sofort abgewiesen.${NC}"
+            echo ""
+            echo -e "  ${BOLD}Port 3389 oeffnen:${NC}"
+            echo -e "  ${YELLOW}→ Menue [9] Security Groups${NC}"
+            echo -e "  ${DIM}  → Regel hinzufuegen → [7] RDP (TCP 3389) → Quelle: Anywhere${NC}"
+            echo ""
+            echo -e "  ${DIM}  Danach hier nochmal aufrufen – RDP-Daten werden dann angezeigt.${NC}"
         fi
     fi
 }
