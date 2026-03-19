@@ -1,47 +1,146 @@
 #!/bin/bash
 
-# SCHRITT 5: Alle Ressourcen loeschen (Teardown)
-# Liest IDs aus 01_output.env und 02_output.env
+# SCHRITT 5: Ressourcen loeschen (selektiv oder vollstaendig)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_01="$SCRIPT_DIR/01_output.env"
 OUTPUT_02="$SCRIPT_DIR/02_output.env"
 
-if [ ! -f "$OUTPUT_01" ]; then
-    echo -e "${RED}Fehler: 01_output.env nicht gefunden.${NC}"
+if [ ! -f "$OUTPUT_01" ] || ! grep -q "VPC_ID=vpc-" "$OUTPUT_01" 2>/dev/null; then
+    echo -e "${RED}Fehler: Kein aktives Setup gefunden (01_output.env leer).${NC}"
     exit 1
 fi
 
 source "$OUTPUT_01"
 [ -f "$OUTPUT_02" ] && source "$OUTPUT_02"
 
-echo -e "${BOLD}=== Schritt 5: Teardown ===${NC}"
+# ─── Uebersicht aktueller Ressourcen ──────────────────────────────────────────
+clear
+echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║           Teardown – Ressourcen loeschen        ║${NC}"
+echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  VPC:    ${CYAN}$VPC_ID${NC}  ($VPC_CIDR)"
-echo -e "  Region: ${CYAN}$REGION${NC}"
-echo ""
-echo -e "${RED}WARNUNG: Alle folgenden Ressourcen werden unwiderruflich geloescht!${NC}"
+echo -e "${BOLD}─── Aktuelle Ressourcen ─────────────────────────────${NC}"
+echo -e "  VPC:    ${CYAN}$VPC_ID${NC}  ($VPC_CIDR)  Region: $REGION"
 echo ""
 
+# EC2 Instanzen
+EC2_FOUND=false
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+    IID="${!IID_VAR}"
+    [ -n "$IID" ] && echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}" && EC2_FOUND=true
+done
+$EC2_FOUND || echo -e "  ${DIM}[1] EC2  – keine Instanzen${NC}"
+
+# Security Groups
+echo ""
+SG_FOUND=false
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    SG_VAR="SG_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+    SG="${!SG_VAR}"
+    [ -n "$SG" ] && echo -e "  [2] SG   sec-${!SN_NAME_VAR}: ${CYAN}$SG${NC}" && SG_FOUND=true
+done
+$SG_FOUND || echo -e "  ${DIM}[2] SG   – keine Security Groups${NC}"
+
+# Subnetze
+echo ""
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    SID_VAR="SUBNET_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+    SID="${!SID_VAR}"
+    [ -n "$SID" ] && echo -e "  [3] SN   ${!SN_NAME_VAR}: ${CYAN}$SID${NC}"
+done
+
+# Route Tables
+echo ""
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    RT_VAR="RT_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+    RT="${!RT_VAR}"
+    [ -n "$RT" ] && echo -e "  [4] RT   rt-${!SN_NAME_VAR}: ${CYAN}$RT${NC}"
+done
+
+# IGW
+echo ""
+if [ -n "$IGW_ID" ]; then
+    echo -e "  [5] IGW  ${CYAN}$IGW_ID${NC}"
+else
+    echo -e "  ${DIM}[5] IGW  – nicht vorhanden${NC}"
+fi
+
+# VPC
+echo ""
+echo -e "  [6] VPC  ${CYAN}$VPC_ID${NC}  ${DIM}(setzt [2][3][4][5] voraus)${NC}"
+
+# ENV
+echo ""
+echo -e "  [7] .env Dateien leeren  ${DIM}(01_output.env + 02_output.env)${NC}"
+
+echo ""
+echo -e "${BOLD}────────────────────────────────────────────────────${NC}"
+echo -e "  ${RED}[A]${NC} Alles loeschen  ${DIM}(vollstaendiger Teardown, 1→7)${NC}"
+echo -e "  ${CYAN}Nummern${NC} kommagetrennt eingeben  ${DIM}(z.B. 1  oder  1,2  oder  1,2,6,7)${NC}"
+echo -e "  [0] Abbrechen"
+echo ""
+read -rp "Auswahl: " RAW_SEL
+
+[ "$RAW_SEL" == "0" ] && echo -e "${YELLOW}Abgebrochen.${NC}" && exit 0
+
+# Auswahl aufloesen
+if [[ "$RAW_SEL" =~ ^[Aa]$ ]]; then
+    STEPS=(1 2 3 4 5 6 7)
+else
+    IFS=',' read -ra PARTS <<< "$RAW_SEL"
+    STEPS=()
+    for P in "${PARTS[@]}"; do
+        P=$(echo "$P" | tr -d ' ')
+        [[ "$P" =~ ^[1-7]$ ]] && STEPS+=("$P")
+    done
+    if [ ${#STEPS[@]} -eq 0 ]; then
+        echo -e "${RED}Keine gueltige Auswahl.${NC}"; exit 1
+    fi
+fi
+
+# Zusammenfassung
+echo ""
+echo -e "${BOLD}─── Zu loeschen ─────────────────────────────────────${NC}"
+for S in "${STEPS[@]}"; do
+    case "$S" in
+        1) echo -e "  ${RED}✗${NC} EC2 Instanzen terminieren" ;;
+        2) echo -e "  ${RED}✗${NC} Security Groups loeschen" ;;
+        3) echo -e "  ${RED}✗${NC} Subnetze loeschen" ;;
+        4) echo -e "  ${RED}✗${NC} Route Tables loeschen" ;;
+        5) echo -e "  ${RED}✗${NC} Internet Gateway loeschen" ;;
+        6) echo -e "  ${RED}✗${NC} VPC loeschen" ;;
+        7) echo -e "  ${RED}✗${NC} .env Dateien leeren" ;;
+    esac
+done
+echo ""
 read -rp "Wirklich loeschen? [j/N]: " CONFIRM
-[[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && echo -e "${RED}Abgebrochen.${NC}" && exit 0
+[[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && echo -e "${YELLOW}Abgebrochen.${NC}" && exit 0
 echo ""
 
-# ─── 1. EC2 Instanzen terminieren ─────────────────────────────────────────────
-if [ -n "$SUBNET_COUNT" ]; then
+# ─── Hilfsfunktion: Schritt enthalten? ────────────────────────────────────────
+has_step() {
+    local S="$1"
+    for X in "${STEPS[@]}"; do [ "$X" == "$S" ] && return 0; done
+    return 1
+}
+
+# ─── 1. EC2 terminieren ───────────────────────────────────────────────────────
+if has_step 1; then
     echo -e "${YELLOW}[1] EC2 Instanzen terminieren...${NC}"
     INSTANCE_IDS_LIST=()
     for ((n=1; n<=SUBNET_COUNT; n++)); do
-        IID_VAR="INSTANCE_ID_$n"
+        IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
         IID="${!IID_VAR}"
-        SN_NAME_VAR="SN_NAME_$n"
         if [ -n "$IID" ]; then
             aws ec2 terminate-instances --instance-ids "$IID" --region "$REGION" \
                 --query "TerminatingInstances[0].CurrentState.Name" --output text 2>/dev/null
@@ -49,92 +148,102 @@ if [ -n "$SUBNET_COUNT" ]; then
             INSTANCE_IDS_LIST+=("$IID")
         fi
     done
-
     if [ ${#INSTANCE_IDS_LIST[@]} -gt 0 ]; then
-        echo -e "  Warte auf Terminierung..."
+        echo -e "  ${DIM}Warte auf Terminierung...${NC}"
         aws ec2 wait instance-terminated --instance-ids "${INSTANCE_IDS_LIST[@]}" --region "$REGION"
-        echo -e "  ${GREEN}Alle Instanzen terminiert.${NC}"
+        echo -e "  ${GREEN}✓ Alle Instanzen terminiert.${NC}"
+    else
+        echo -e "  ${DIM}Keine Instanzen gefunden.${NC}"
     fi
-else
-    echo -e "${YELLOW}[1] Keine Instanzen in 02_output.env – uebersprungen.${NC}"
 fi
 
 # ─── 2. Security Groups loeschen ──────────────────────────────────────────────
-echo -e "${YELLOW}[2] Security Groups loeschen...${NC}"
-for ((n=1; n<=SUBNET_COUNT; n++)); do
-    SG_VAR="SG_ID_$n"
-    SN_NAME_VAR="SN_NAME_$n"
-    SG="${!SG_VAR}"
-    if [ -n "$SG" ]; then
-        RESULT=$(aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>&1)
-        if echo "$RESULT" | grep -q "error\|Error"; then
-            echo -e "  ${RED}Fehler sec-${!SN_NAME_VAR}: $RESULT${NC}"
-        else
-            echo -e "  ${GREEN}sec-${!SN_NAME_VAR}${NC}: $SG geloescht"
+if has_step 2; then
+    echo -e "${YELLOW}[2] Security Groups loeschen...${NC}"
+    for ((n=1; n<=SUBNET_COUNT; n++)); do
+        SG_VAR="SG_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+        SG="${!SG_VAR}"
+        if [ -n "$SG" ]; then
+            RESULT=$(aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>&1)
+            if echo "$RESULT" | grep -q "error\|Error"; then
+                echo -e "  ${RED}Fehler sec-${!SN_NAME_VAR}: $RESULT${NC}"
+            else
+                echo -e "  ${GREEN}✓ sec-${!SN_NAME_VAR}${NC}: $SG geloescht"
+            fi
         fi
-    fi
-done
+    done
+fi
 
 # ─── 3. Subnetze loeschen ─────────────────────────────────────────────────────
-echo -e "${YELLOW}[3] Subnetze loeschen...${NC}"
-for ((n=1; n<=SUBNET_COUNT; n++)); do
-    SID_VAR="SUBNET_ID_$n"
-    SN_NAME_VAR="SN_NAME_$n"
-    SID="${!SID_VAR}"
-    if [ -n "$SID" ]; then
-        RESULT=$(aws ec2 delete-subnet --subnet-id "$SID" --region "$REGION" 2>&1)
-        if echo "$RESULT" | grep -q "error\|Error"; then
-            echo -e "  ${RED}Fehler ${!SN_NAME_VAR}: $RESULT${NC}"
-        else
-            echo -e "  ${GREEN}${!SN_NAME_VAR}${NC}: $SID geloescht"
+if has_step 3; then
+    echo -e "${YELLOW}[3] Subnetze loeschen...${NC}"
+    for ((n=1; n<=SUBNET_COUNT; n++)); do
+        SID_VAR="SUBNET_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+        SID="${!SID_VAR}"
+        if [ -n "$SID" ]; then
+            RESULT=$(aws ec2 delete-subnet --subnet-id "$SID" --region "$REGION" 2>&1)
+            if echo "$RESULT" | grep -q "error\|Error"; then
+                echo -e "  ${RED}Fehler ${!SN_NAME_VAR}: $RESULT${NC}"
+            else
+                echo -e "  ${GREEN}✓ ${!SN_NAME_VAR}${NC}: $SID geloescht"
+            fi
         fi
-    fi
-done
+    done
+fi
 
 # ─── 4. Route Tables loeschen ─────────────────────────────────────────────────
-echo -e "${YELLOW}[4] Route Tables loeschen...${NC}"
-for ((n=1; n<=SUBNET_COUNT; n++)); do
-    RT_VAR="RT_ID_$n"
-    SN_NAME_VAR="SN_NAME_$n"
-    RT="${!RT_VAR}"
-    if [ -n "$RT" ]; then
-        RESULT=$(aws ec2 delete-route-table --route-table-id "$RT" --region "$REGION" 2>&1)
-        if echo "$RESULT" | grep -q "error\|Error"; then
-            echo -e "  ${RED}Fehler rt-${!SN_NAME_VAR}: $RESULT${NC}"
-        else
-            echo -e "  ${GREEN}rt-${!SN_NAME_VAR}${NC}: $RT geloescht"
+if has_step 4; then
+    echo -e "${YELLOW}[4] Route Tables loeschen...${NC}"
+    for ((n=1; n<=SUBNET_COUNT; n++)); do
+        RT_VAR="RT_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
+        RT="${!RT_VAR}"
+        if [ -n "$RT" ]; then
+            RESULT=$(aws ec2 delete-route-table --route-table-id "$RT" --region "$REGION" 2>&1)
+            if echo "$RESULT" | grep -q "error\|Error"; then
+                echo -e "  ${RED}Fehler rt-${!SN_NAME_VAR}: $RESULT${NC}"
+            else
+                echo -e "  ${GREEN}✓ rt-${!SN_NAME_VAR}${NC}: $RT geloescht"
+            fi
         fi
-    fi
-done
+    done
+fi
 
-# ─── 5. Internet Gateway detachen und loeschen ────────────────────────────────
-if [ -n "$IGW_ID" ]; then
-    echo -e "${YELLOW}[5] Internet Gateway loeschen...${NC}"
-    aws ec2 detach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" --region "$REGION" 2>/dev/null
-    RESULT=$(aws ec2 delete-internet-gateway --internet-gateway-id "$IGW_ID" --region "$REGION" 2>&1)
-    if echo "$RESULT" | grep -q "error\|Error"; then
-        echo -e "  ${RED}Fehler IGW: $RESULT${NC}"
+# ─── 5. Internet Gateway ──────────────────────────────────────────────────────
+if has_step 5; then
+    if [ -n "$IGW_ID" ]; then
+        echo -e "${YELLOW}[5] Internet Gateway loeschen...${NC}"
+        aws ec2 detach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" --region "$REGION" 2>/dev/null
+        RESULT=$(aws ec2 delete-internet-gateway --internet-gateway-id "$IGW_ID" --region "$REGION" 2>&1)
+        if echo "$RESULT" | grep -q "error\|Error"; then
+            echo -e "  ${RED}Fehler IGW: $RESULT${NC}"
+        else
+            echo -e "  ${GREEN}✓ IGW${NC}: $IGW_ID geloescht"
+        fi
     else
-        echo -e "  ${GREEN}IGW${NC}: $IGW_ID geloescht"
+        echo -e "${DIM}[5] Kein Internet Gateway – uebersprungen.${NC}"
     fi
-else
-    echo -e "${YELLOW}[5] Kein Internet Gateway vorhanden.${NC}"
 fi
 
 # ─── 6. VPC loeschen ──────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6] VPC loeschen...${NC}"
-RESULT=$(aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION" 2>&1)
-if echo "$RESULT" | grep -q "error\|Error"; then
-    echo -e "  ${RED}Fehler VPC: $RESULT${NC}"
-    echo -e "  ${YELLOW}Tipp: Moeglicherweise gibt es noch abhaengige Ressourcen.${NC}"
-else
-    echo -e "  ${GREEN}VPC${NC}: $VPC_ID geloescht"
+if has_step 6; then
+    echo -e "${YELLOW}[6] VPC loeschen...${NC}"
+    RESULT=$(aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION" 2>&1)
+    if echo "$RESULT" | grep -q "error\|Error"; then
+        echo -e "  ${RED}Fehler VPC: $RESULT${NC}"
+        echo -e "  ${YELLOW}Tipp: Erst SG [2], Subnetze [3], RT [4], IGW [5] loeschen.${NC}"
+    else
+        echo -e "  ${GREEN}✓ VPC${NC}: $VPC_ID geloescht"
+    fi
 fi
 
-# ─── 7. .env Dateien aufraumen ────────────────────────────────────────────────
-echo -e "${YELLOW}[7] .env Dateien aufraumen...${NC}"
-> "$OUTPUT_01" && echo -e "  ${GREEN}01_output.env geleert${NC}"
-[ -f "$OUTPUT_02" ] && > "$OUTPUT_02" && echo -e "  ${GREEN}02_output.env geleert${NC}"
+# ─── 7. .env Dateien leeren ───────────────────────────────────────────────────
+if has_step 7; then
+    echo -e "${YELLOW}[7] .env Dateien leeren...${NC}"
+    > "$OUTPUT_01" && echo -e "  ${GREEN}✓ 01_output.env geleert${NC}"
+    [ -f "$OUTPUT_02" ] && > "$OUTPUT_02" && echo -e "  ${GREEN}✓ 02_output.env geleert${NC}"
+    # Status-Cache ebenfalls loeschen
+    [ -f "$SCRIPT_DIR/status.cache" ] && rm -f "$SCRIPT_DIR/status.cache" && echo -e "  ${GREEN}✓ status.cache geloescht${NC}"
+fi
 
 echo ""
 echo -e "${BOLD}=== Teardown abgeschlossen ===${NC}"
