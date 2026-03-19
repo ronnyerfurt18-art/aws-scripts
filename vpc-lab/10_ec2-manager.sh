@@ -290,22 +290,55 @@ create_instance() {
 
     echo ""
     echo -e "${GREEN}✓ Instanz laeuft:${NC}"
+    echo -e "  Name:       ${CYAN}$INST_NAME${NC}"
     echo -e "  ID:         ${CYAN}$IID${NC}"
     echo -e "  Public IP:  ${CYAN}$PUB${NC}"
+    echo -e "  OS:         ${CYAN}$AMI_LABEL${NC}"
+    echo ""
+
+    # ─── Naechster Schritt: Verbindungsinfo direkt anzeigen? ──────────────────
     if [ "$PLATFORM" == "Linux" ]; then
-        PEM_FILE="$SCRIPT_DIR/${KP_NAME}.pem"
-        [ ! -f "$PEM_FILE" ] && PEM_FILE="~/${KP_NAME}.pem"
-        echo ""
-        echo -e "  ${BOLD}Verbinden – im Mac-Terminal ausfuehren:${NC}"
-        echo -e "  ${CYAN}ssh -i $PEM_FILE $DEFAULT_USER@$PUB${NC}"
-        echo -e "  ${DIM}  ssh -i  → Verbindung mit privatem Schluessel (.pem)${NC}"
-        echo -e "  ${DIM}  $DEFAULT_USER  → Standardbenutzer auf Amazon Linux${NC}"
-        echo -e "  ${DIM}  $PUB  → oeffentliche IP der Instanz${NC}"
-        echo -e "  ${DIM}  Terminal: Cmd+Leertaste → 'Terminal' eingeben${NC}"
-        echo -e "  ${DIM}  Verbindungsdetails spaeter nochmal unter [5] abrufbar.${NC}"
+        echo -e "  ${BOLD}Naechster Schritt: Verbindung zur Instanz herstellen.${NC}"
+        read -rp "  Verbindungsinfo jetzt anzeigen? [J/n]: " SHOW_CONN
+        if [[ ! "$SHOW_CONN" =~ ^[Nn]$ ]]; then
+            PEM_FILE="$SCRIPT_DIR/${KP_NAME}.pem"
+            [ ! -f "$PEM_FILE" ] && PEM_FILE="~/${KP_NAME}.pem"
+            echo ""
+            echo -e "${BOLD}─── Verbindungsinfo ─────────────────────────────────${NC}"
+            echo -e "  ${BOLD}SSH-Befehl – ausfuehren im Mac-Terminal:${NC}"
+            echo -e "  ${CYAN}ssh -i $PEM_FILE $DEFAULT_USER@$PUB${NC}"
+            echo ""
+            echo -e "  ${BOLD}Erklaerung:${NC}"
+            echo -e "  ${DIM}  ssh     → verschluesselte Fernverbindung zum Server${NC}"
+            echo -e "  ${DIM}  -i      → gibt den privaten Schluessel an (identity file)${NC}"
+            echo -e "  ${DIM}  *.pem   → deine Schluessel-Datei, nur du besitzt sie${NC}"
+            echo -e "  ${DIM}  $DEFAULT_USER → Standardbenutzer auf Amazon Linux${NC}"
+            echo -e "  ${DIM}  $PUB → oeffentliche IP der Instanz${NC}"
+            echo ""
+            echo -e "  ${BOLD}Wo ausfuehren:${NC}"
+            echo -e "  ${DIM}  Auf deinem Mac, NICHT in AWS.${NC}"
+            echo -e "  ${DIM}  Terminal oeffnen: Cmd+Leertaste → 'Terminal' tippen → Enter${NC}"
+            echo ""
+            echo -e "  ${DIM}  Verbindungsinfo spaeter nochmal abrufbar: Menue [5]${NC}"
+        fi
     else
-        echo -e "  ${DIM}RDP:  Port 3389  –  Zugangsdaten unter Menue [5] abrufen${NC}"
-        echo -e "  ${YELLOW}Hinweis: Windows braucht ~10-15 Min bis RDP bereit ist.${NC}"
+        echo -e "  ${BOLD}Naechster Schritt: RDP-Zugangsdaten abrufen.${NC}"
+        read -rp "  Zugangsdaten jetzt anzeigen? [J/n]: " SHOW_CONN
+        if [[ ! "$SHOW_CONN" =~ ^[Nn]$ ]]; then
+            echo ""
+            echo -e "${BOLD}─── RDP-Verbindungsinfo ─────────────────────────────${NC}"
+            echo -e "  Host:  ${CYAN}$PUB${NC}"
+            echo -e "  Port:  ${CYAN}3389${NC}"
+            echo -e "  User:  ${CYAN}Administrator${NC}"
+            echo ""
+            echo -e "  ${BOLD}Erklaerung:${NC}"
+            echo -e "  ${DIM}  RDP  → Remote Desktop Protocol, grafische Fernverbindung${NC}"
+            echo -e "  ${DIM}  Mac: Microsoft Remote Desktop aus dem App Store installieren${NC}"
+            echo -e "  ${DIM}  Dann: Neue Verbindung → Host: $PUB, Port: 3389${NC}"
+            echo ""
+            echo -e "  ${YELLOW}Passwort: Windows benoetigt ~10-15 Min nach Start.${NC}"
+            echo -e "  ${DIM}  Danach unter Menue [5] abrufbar (wird automatisch entschluesselt).${NC}"
+        fi
     fi
 }
 
