@@ -188,6 +188,10 @@ while true; do
     echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
     echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
     echo ""
+    echo -e "${BOLD}─── EC2 Manager ─────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[15]${NC} EC2 Instanzen verwalten  ${DIM}(Linux + Windows, alle Instanzen)${NC}"
+    echo -e "       ${DIM}→ 10_ec2-manager.sh${NC}"
+    echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
     echo -e "  ${CYAN}[11]${NC} Zugriffstests fuer Screenshots"
     echo -e "       ${DIM}→ 06_demo-screenshot.sh${NC}"
@@ -218,6 +222,7 @@ while true; do
         8)  bash "$SCRIPT_DIR/08_security-groups.sh" ;;
         9)  bash "$SCRIPT_DIR/09_network-acl.sh" ;;
         10) bash "$SCRIPT_DIR/03_get-ips.sh" ;;
+        15) bash "$SCRIPT_DIR/10_ec2-manager.sh" ;;
         11) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
         12) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
         13) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
