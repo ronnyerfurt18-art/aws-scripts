@@ -194,20 +194,22 @@ while true; do
     echo -e "${BOLD}─── Informationen ───────────────────────────────────${NC}"
     echo -e "  ${CYAN}[11]${NC} IPs und Status aller Lab-Instanzen anzeigen"
     echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
+    echo -e "  ${CYAN}[12]${NC} Schritt-Anleitung anzeigen  ${DIM}(Ablauf des Labs)${NC}"
+    echo -e "       ${DIM}→ 11_lab-guide.sh${NC}"
     echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
     echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[12]${NC} Zugriffstests fuer Screenshots"
+    echo -e "  ${CYAN}[13]${NC} Zugriffstests fuer Screenshots"
     echo -e "       ${DIM}→ 06_demo-screenshot.sh${NC}"
     echo ""
     echo -e "${BOLD}─── S3 ──────────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[13]${NC} S3 Bucket anlegen (mit public Policy)"
+    echo -e "  ${CYAN}[14]${NC} S3 Bucket anlegen (mit public Policy)"
     echo -e "       ${DIM}→ ../s3-create-bucket.sh${NC}"
-    echo -e "  ${CYAN}[14]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
+    echo -e "  ${CYAN}[15]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
     echo -e "       ${DIM}→ ../s3-sync.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[15]${NC} ${RED}Alle Ressourcen loeschen (Teardown)${NC}"
+    echo -e "  ${CYAN}[16]${NC} ${RED}Alle Ressourcen loeschen (Teardown)${NC}"
     echo -e "       ${DIM}→ 05_teardown.sh${NC}"
     echo ""
     echo -e "  ${CYAN}[0]${NC}  Beenden"
@@ -227,10 +229,11 @@ while true; do
         9)  bash "$SCRIPT_DIR/08_security-groups.sh" ;;
         10) bash "$SCRIPT_DIR/09_network-acl.sh" ;;
         11) bash "$SCRIPT_DIR/03_get-ips.sh" ;;
-        12) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
-        13) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
-        14) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
-        15) bash "$SCRIPT_DIR/05_teardown.sh" ;;
+        12) bash "$SCRIPT_DIR/11_lab-guide.sh" ;;
+        13) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
+        14) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
+        15) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
+        16) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;
