@@ -21,7 +21,7 @@ echo -e "  1. Klicke auf ${CYAN}AWS Details${NC}"
 echo -e "  2. Klicke auf ${CYAN}Show${NC} neben 'AWS CLI'"
 echo -e "  3. Kopiere den gesamten Block (Cmd+A, Cmd+C)"
 echo ""
-echo -e "Dann hier einfuegen und mit ${CYAN}ENTER + Ctrl+D${NC} bestaetigen:"
+echo -e "Dann hier einfuegen, danach ${CYAN}Enter${NC} druecken und anschliessend ${CYAN}Ctrl+D${NC}:"
 echo -e "${YELLOW}────────────────────────────────────────${NC}"
 
 INPUT=$(cat)
