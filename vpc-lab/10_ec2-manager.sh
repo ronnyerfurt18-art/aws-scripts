@@ -295,10 +295,17 @@ create_instance() {
     if [ "$PLATFORM" == "Linux" ]; then
         PEM_FILE="$SCRIPT_DIR/${KP_NAME}.pem"
         [ ! -f "$PEM_FILE" ] && PEM_FILE="~/${KP_NAME}.pem"
-        echo -e "  ${DIM}SSH:  ssh -i $PEM_FILE $DEFAULT_USER@$PUB${NC}"
+        echo ""
+        echo -e "  ${BOLD}Verbinden – im Mac-Terminal ausfuehren:${NC}"
+        echo -e "  ${CYAN}ssh -i $PEM_FILE $DEFAULT_USER@$PUB${NC}"
+        echo -e "  ${DIM}  ssh -i  → Verbindung mit privatem Schluessel (.pem)${NC}"
+        echo -e "  ${DIM}  $DEFAULT_USER  → Standardbenutzer auf Amazon Linux${NC}"
+        echo -e "  ${DIM}  $PUB  → oeffentliche IP der Instanz${NC}"
+        echo -e "  ${DIM}  Terminal: Cmd+Leertaste → 'Terminal' eingeben${NC}"
+        echo -e "  ${DIM}  Verbindungsdetails spaeter nochmal unter [5] abrufbar.${NC}"
     else
-        echo -e "  ${DIM}RDP:  Port 3389  –  Passwort per [5] abrufen${NC}"
-        echo -e "  ${YELLOW}Hinweis: Windows braucht ~5 Min bis RDP bereit ist.${NC}"
+        echo -e "  ${DIM}RDP:  Port 3389  –  Zugangsdaten unter Menue [5] abrufen${NC}"
+        echo -e "  ${YELLOW}Hinweis: Windows braucht ~10-15 Min bis RDP bereit ist.${NC}"
     fi
 }
 
@@ -362,10 +369,22 @@ connection_info() {
     if [ "$SELECTED_PLATFORM" == "Linux" ]; then
         PEM_FILE="$SCRIPT_DIR/${KEY_NAME}.pem"
         [ ! -f "$PEM_FILE" ] && PEM_FILE="${KEY_NAME}.pem"
-        echo -e "  ${BOLD}SSH-Befehl:${NC}"
+        echo -e "  ${BOLD}SSH-Verbindung (Linux-Terminal auf deinem Mac):${NC}"
         echo -e "  ${CYAN}ssh -i $PEM_FILE ec2-user@$PUB${NC}"
         echo ""
-        echo -e "  ${DIM}Falls anderer User (z.B. ubuntu): ssh -i $PEM_FILE ubuntu@$PUB${NC}"
+        echo -e "  ${BOLD}Erklaerung:${NC}"
+        echo -e "  ${DIM}  ssh          → Programm fuer verschluesselte Fernverbindung${NC}"
+        echo -e "  ${DIM}  -i           → 'identity file', gibt den privaten Schluessel an${NC}"
+        echo -e "  ${DIM}  $PEM_FILE${NC}"
+        echo -e "  ${DIM}               → deine .pem-Datei (privater Schluessel, nur du hast sie)${NC}"
+        echo -e "  ${DIM}  ec2-user     → Standard-Benutzername auf Amazon Linux${NC}"
+        echo -e "  ${DIM}  $PUB${NC}"
+        echo -e "  ${DIM}               → oeffentliche IP-Adresse der Instanz${NC}"
+        echo ""
+        echo -e "  ${BOLD}Wo ausfuehren:${NC}"
+        echo -e "  ${DIM}  Terminal auf deinem Mac (nicht in AWS).${NC}"
+        echo -e "  ${DIM}  Terminal oeffnen: Finder → Programme → Dienstprogramme → Terminal${NC}"
+        echo -e "  ${DIM}  Oder: Spotlight (Cmd+Leertaste) → 'Terminal' eingeben${NC}"
     else
         echo -e "  ${BOLD}RDP-Verbindung:${NC}"
         echo -e "  Host:  ${CYAN}$PUB${NC}"
