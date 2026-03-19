@@ -37,7 +37,18 @@ EC2_FOUND=false
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
     IID="${!IID_VAR}"
-    [ -n "$IID" ] && echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}" && EC2_FOUND=true
+    if [ -n "$IID" ]; then
+        INFO=$(aws ec2 describe-instances --instance-ids "$IID" \
+            --query "Reservations[0].Instances[0].[InstanceType,Platform,State.Name]" \
+            --output text --region "$REGION" 2>/dev/null)
+        ITYPE=$(echo "$INFO" | awk '{print $1}')
+        PLATFORM=$(echo "$INFO" | awk '{print $2}')
+        ISTATE=$(echo "$INFO" | awk '{print $3}')
+        [ "$PLATFORM" == "None" ] || [ -z "$PLATFORM" ] && PLATFORM="Linux"
+        [ "$ISTATE" == "running" ] && STATE_LABEL="${GREEN}running${NC}" || STATE_LABEL="${RED}$ISTATE${NC}"
+        echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}  ${DIM}$ITYPE / $PLATFORM${NC}  $STATE_LABEL"
+        EC2_FOUND=true
+    fi
 done
 $EC2_FOUND || echo -e "  ${DIM}[1] EC2  – keine Instanzen${NC}"
 
