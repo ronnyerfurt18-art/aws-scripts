@@ -13,12 +13,37 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EC2_OUTPUT="$SCRIPT_DIR/02_output.env"
 
 if [ ! -f "$EC2_OUTPUT" ]; then
-    echo -e "${RED}Fehler: 02_output.env nicht gefunden.${NC}"
-    echo -e "Bitte zuerst ./02_ec2-setup.sh ausfuehren."
+    echo -e "${RED}Fehler: 02_output.env nicht gefunden. Schritt 2 (EC2 Setup) muss vorher ausgefuehrt werden.${NC}"
     exit 1
 fi
 
+[ -f "$SCRIPT_DIR/config.env" ] && source "$SCRIPT_DIR/config.env"
 source "$EC2_OUTPUT"
+
+# PEM-Datei ermitteln
+PEM_FILE="$SCRIPT_DIR/${KEY_NAME}.pem"
+if [ ! -f "$PEM_FILE" ]; then
+    mapfile -t PEM_FILES < <(ls "$SCRIPT_DIR"/*.pem 2>/dev/null)
+    if [ ${#PEM_FILES[@]} -eq 1 ]; then
+        PEM_FILE="${PEM_FILES[0]}"
+        echo -e "  ${YELLOW}PEM automatisch gefunden: ${CYAN}${PEM_FILE##*/}${NC}"
+    elif [ ${#PEM_FILES[@]} -gt 1 ]; then
+        echo -e "${YELLOW}Mehrere PEM-Dateien gefunden:${NC}"
+        for i in "${!PEM_FILES[@]}"; do echo -e "  [$((i+1))] ${PEM_FILES[$i]##*/}"; done
+        read -rp "Auswahl [1]: " PEM_SEL
+        PEM_FILE="${PEM_FILES[$((${PEM_SEL:-1}-1))]}"
+    fi
+    # Erkannten KEY_NAME in config.env speichern fuer folgende Skripte
+    DETECTED_KEY="${PEM_FILE##*/}"; DETECTED_KEY="${DETECTED_KEY%.pem}"
+    if [ -n "$DETECTED_KEY" ]; then
+        KEY_NAME="$DETECTED_KEY"
+        if grep -q "^KEY_NAME=" "$SCRIPT_DIR/config.env" 2>/dev/null; then
+            sed -i '' "s/^KEY_NAME=.*/KEY_NAME=$DETECTED_KEY/" "$SCRIPT_DIR/config.env"
+        else
+            echo "KEY_NAME=$DETECTED_KEY" >> "$SCRIPT_DIR/config.env"
+        fi
+    fi
+fi
 
 echo -e "${BOLD}=== Schritt 3: Public IPs abrufen ===${NC}"
 echo ""
@@ -50,14 +75,16 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         *)       LABEL="[$SN_TYPE]" ;;
     esac
 
-    echo -e "  ec2-${SN_NAME} $LABEL  Status: $STATE"
+    if [ "$PUBLIC_IP" != "None" ] && [ -n "$PUBLIC_IP" ]; then
+        echo -e "  ${BOLD}$LABEL${NC}  ec2-${SN_NAME}  ${CYAN}http://$PUBLIC_IP${NC}"
+    else
+        echo -e "  ${BOLD}$LABEL${NC}  ec2-${SN_NAME}  ${YELLOW}(noch keine Public IP – Instanz startet noch)${NC}"
+    fi
+    echo -e "    Status:     $STATE"
     echo -e "    Private IP: ${CYAN}$PRIV_IP${NC}"
     if [ "$PUBLIC_IP" != "None" ] && [ -n "$PUBLIC_IP" ]; then
         echo -e "    Public IP:  ${CYAN}$PUBLIC_IP${NC}"
-        echo -e "    URL:        ${CYAN}http://$PUBLIC_IP${NC}"
-        echo -e "    SSH:        ${CYAN}ssh -i \$PEM ec2-user@$PUBLIC_IP${NC}"
-    else
-        echo -e "    ${YELLOW}Noch keine Public IP – Instanz startet noch.${NC}"
+        echo -e "    SSH:        ${CYAN}ssh -i $PEM_FILE ec2-user@$PUBLIC_IP${NC}"
     fi
     echo ""
 done

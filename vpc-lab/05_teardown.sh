@@ -29,7 +29,20 @@ echo -e "${BOLD}║           Teardown – Ressourcen loeschen        ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BOLD}─── Aktuelle Ressourcen ─────────────────────────────${NC}"
+echo -e "  ${DIM}Prüfe AWS...${NC}"
+
+# VPC-Existenzcheck (einmalig – alle Ressourcen sind VPC-scoped)
+VPC_CHECK=$(aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region "$REGION" \
+    --query "Vpcs[0].VpcId" --output text 2>&1)
+if echo "$VPC_CHECK" | grep -qE "NotFound|does not exist|None|-$"; then
+    VPC_EXISTS=false
+else
+    VPC_EXISTS=true
+fi
+
+printf "\r\033[K"  # Zeile "Prüfe AWS..." überschreiben
 echo -e "  VPC:    ${CYAN}$VPC_ID${NC}  ($VPC_CIDR)  Region: $REGION"
+! $VPC_EXISTS && echo -e "  ${YELLOW}Hinweis: VPC existiert nicht mehr in AWS – .env enthält veraltete IDs.${NC}"
 echo ""
 
 # EC2 Instanzen
@@ -45,8 +58,13 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         PLATFORM=$(echo "$INFO" | awk '{print $2}')
         ISTATE=$(echo "$INFO" | awk '{print $3}')
         [ "$PLATFORM" == "None" ] || [ -z "$PLATFORM" ] && PLATFORM="Linux"
-        [ "$ISTATE" == "running" ] && STATE_LABEL="${GREEN}running${NC}" || STATE_LABEL="${RED}$ISTATE${NC}"
-        echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}  ${DIM}$ITYPE / $PLATFORM${NC}  $STATE_LABEL"
+        if [ -z "$ISTATE" ] || [ "$ISTATE" == "None" ] || [ "$ISTATE" == "terminated" ]; then
+            echo -e "  ${DIM}[1] EC2  ec2-${!SN_NAME_VAR}: $IID  [bereits terminiert]${NC}"
+        elif [ "$ISTATE" == "running" ]; then
+            echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}  ${DIM}$ITYPE / $PLATFORM${NC}  ${GREEN}$ISTATE${NC}"
+        else
+            echo -e "  [1] EC2  ec2-${!SN_NAME_VAR}: ${CYAN}$IID${NC}  ${DIM}$ITYPE / $PLATFORM${NC}  ${YELLOW}$ISTATE${NC}"
+        fi
         EC2_FOUND=true
     fi
 done
@@ -58,7 +76,14 @@ SG_FOUND=false
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     SG_VAR="SG_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
     SG="${!SG_VAR}"
-    [ -n "$SG" ] && echo -e "  [2] SG   sec-${!SN_NAME_VAR}: ${CYAN}$SG${NC}" && SG_FOUND=true
+    if [ -n "$SG" ]; then
+        if $VPC_EXISTS; then
+            echo -e "  [2] SG   sec-${!SN_NAME_VAR}: ${CYAN}$SG${NC}"
+        else
+            echo -e "  ${DIM}[2] SG   sec-${!SN_NAME_VAR}: $SG  [bereits geloescht]${NC}"
+        fi
+        SG_FOUND=true
+    fi
 done
 $SG_FOUND || echo -e "  ${DIM}[2] SG   – keine Security Groups${NC}"
 
@@ -67,7 +92,13 @@ echo ""
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     SID_VAR="SUBNET_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
     SID="${!SID_VAR}"
-    [ -n "$SID" ] && echo -e "  [3] SN   ${!SN_NAME_VAR}: ${CYAN}$SID${NC}"
+    if [ -n "$SID" ]; then
+        if $VPC_EXISTS; then
+            echo -e "  [3] SN   ${!SN_NAME_VAR}: ${CYAN}$SID${NC}"
+        else
+            echo -e "  ${DIM}[3] SN   ${!SN_NAME_VAR}: $SID  [bereits geloescht]${NC}"
+        fi
+    fi
 done
 
 # Route Tables
@@ -75,20 +106,34 @@ echo ""
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     RT_VAR="RT_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
     RT="${!RT_VAR}"
-    [ -n "$RT" ] && echo -e "  [4] RT   rt-${!SN_NAME_VAR}: ${CYAN}$RT${NC}"
+    if [ -n "$RT" ]; then
+        if $VPC_EXISTS; then
+            echo -e "  [4] RT   rt-${!SN_NAME_VAR}: ${CYAN}$RT${NC}"
+        else
+            echo -e "  ${DIM}[4] RT   rt-${!SN_NAME_VAR}: $RT  [bereits geloescht]${NC}"
+        fi
+    fi
 done
 
 # IGW
 echo ""
 if [ -n "$IGW_ID" ]; then
-    echo -e "  [5] IGW  ${CYAN}$IGW_ID${NC}"
+    if $VPC_EXISTS; then
+        echo -e "  [5] IGW  ${CYAN}$IGW_ID${NC}"
+    else
+        echo -e "  ${DIM}[5] IGW  $IGW_ID  [bereits geloescht]${NC}"
+    fi
 else
     echo -e "  ${DIM}[5] IGW  – nicht vorhanden${NC}"
 fi
 
 # VPC
 echo ""
-echo -e "  [6] VPC  ${CYAN}$VPC_ID${NC}  ${DIM}(setzt [2][3][4][5] voraus)${NC}"
+if $VPC_EXISTS; then
+    echo -e "  [6] VPC  ${CYAN}$VPC_ID${NC}  ${DIM}(setzt [2][3][4][5] voraus)${NC}"
+else
+    echo -e "  ${DIM}[6] VPC  $VPC_ID  [bereits geloescht]${NC}"
+fi
 
 # ENV
 echo ""
@@ -145,6 +190,16 @@ has_step() {
     return 1
 }
 
+# ─── Hilfsfunktion: Fehler klassifizieren ─────────────────────────────────────
+# Gibt 0=Erfolg, 1=NotFound (bereits weg), 2=echter Fehler zurück
+classify_result() {
+    local RESULT="$1"
+    [ -z "$RESULT" ] && return 0
+    echo "$RESULT" | grep -qE "NotFound|does not exist" && return 1
+    echo "$RESULT" | grep -qiE "error|Error" && return 2
+    return 0
+}
+
 # ─── 1. EC2 terminieren ───────────────────────────────────────────────────────
 if has_step 1; then
     echo -e "${YELLOW}[1] EC2 Instanzen terminieren...${NC}"
@@ -153,10 +208,14 @@ if has_step 1; then
         IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
         IID="${!IID_VAR}"
         if [ -n "$IID" ]; then
-            aws ec2 terminate-instances --instance-ids "$IID" --region "$REGION" \
-                --query "TerminatingInstances[0].CurrentState.Name" --output text 2>/dev/null
-            echo -e "  ${GREEN}ec2-${!SN_NAME_VAR}${NC}: $IID → wird terminiert"
-            INSTANCE_IDS_LIST+=("$IID")
+            RESULT=$(aws ec2 terminate-instances --instance-ids "$IID" --region "$REGION" \
+                --query "TerminatingInstances[0].CurrentState.Name" --output text 2>&1)
+            if echo "$RESULT" | grep -qE "NotFound|does not exist|terminated"; then
+                echo -e "  ${DIM}ec2-${!SN_NAME_VAR}: $IID  [bereits terminiert]${NC}"
+            else
+                echo -e "  ${GREEN}ec2-${!SN_NAME_VAR}${NC}: $IID → wird terminiert"
+                INSTANCE_IDS_LIST+=("$IID")
+            fi
         fi
     done
     if [ ${#INSTANCE_IDS_LIST[@]} -gt 0 ]; then
@@ -164,7 +223,7 @@ if has_step 1; then
         aws ec2 wait instance-terminated --instance-ids "${INSTANCE_IDS_LIST[@]}" --region "$REGION"
         echo -e "  ${GREEN}✓ Alle Instanzen terminiert.${NC}"
     else
-        echo -e "  ${DIM}Keine Instanzen gefunden.${NC}"
+        echo -e "  ${DIM}Keine aktiven Instanzen – nichts zu tun.${NC}"
     fi
 fi
 
@@ -176,11 +235,12 @@ if has_step 2; then
         SG="${!SG_VAR}"
         if [ -n "$SG" ]; then
             RESULT=$(aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>&1)
-            if echo "$RESULT" | grep -q "error\|Error"; then
-                echo -e "  ${RED}Fehler sec-${!SN_NAME_VAR}: $RESULT${NC}"
-            else
-                echo -e "  ${GREEN}✓ sec-${!SN_NAME_VAR}${NC}: $SG geloescht"
-            fi
+            classify_result "$RESULT"
+            case $? in
+                0) echo -e "  ${GREEN}✓ sec-${!SN_NAME_VAR}${NC}: $SG geloescht" ;;
+                1) echo -e "  ${DIM}  sec-${!SN_NAME_VAR}: $SG  [bereits geloescht]${NC}" ;;
+                2) echo -e "  ${RED}  Fehler sec-${!SN_NAME_VAR}: $RESULT${NC}" ;;
+            esac
         fi
     done
 fi
@@ -193,11 +253,12 @@ if has_step 3; then
         SID="${!SID_VAR}"
         if [ -n "$SID" ]; then
             RESULT=$(aws ec2 delete-subnet --subnet-id "$SID" --region "$REGION" 2>&1)
-            if echo "$RESULT" | grep -q "error\|Error"; then
-                echo -e "  ${RED}Fehler ${!SN_NAME_VAR}: $RESULT${NC}"
-            else
-                echo -e "  ${GREEN}✓ ${!SN_NAME_VAR}${NC}: $SID geloescht"
-            fi
+            classify_result "$RESULT"
+            case $? in
+                0) echo -e "  ${GREEN}✓ ${!SN_NAME_VAR}${NC}: $SID geloescht" ;;
+                1) echo -e "  ${DIM}  ${!SN_NAME_VAR}: $SID  [bereits geloescht]${NC}" ;;
+                2) echo -e "  ${RED}  Fehler ${!SN_NAME_VAR}: $RESULT${NC}" ;;
+            esac
         fi
     done
 fi
@@ -210,11 +271,12 @@ if has_step 4; then
         RT="${!RT_VAR}"
         if [ -n "$RT" ]; then
             RESULT=$(aws ec2 delete-route-table --route-table-id "$RT" --region "$REGION" 2>&1)
-            if echo "$RESULT" | grep -q "error\|Error"; then
-                echo -e "  ${RED}Fehler rt-${!SN_NAME_VAR}: $RESULT${NC}"
-            else
-                echo -e "  ${GREEN}✓ rt-${!SN_NAME_VAR}${NC}: $RT geloescht"
-            fi
+            classify_result "$RESULT"
+            case $? in
+                0) echo -e "  ${GREEN}✓ rt-${!SN_NAME_VAR}${NC}: $RT geloescht" ;;
+                1) echo -e "  ${DIM}  rt-${!SN_NAME_VAR}: $RT  [bereits geloescht]${NC}" ;;
+                2) echo -e "  ${RED}  Fehler rt-${!SN_NAME_VAR}: $RESULT${NC}" ;;
+            esac
         fi
     done
 fi
@@ -225,11 +287,12 @@ if has_step 5; then
         echo -e "${YELLOW}[5] Internet Gateway loeschen...${NC}"
         aws ec2 detach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" --region "$REGION" 2>/dev/null
         RESULT=$(aws ec2 delete-internet-gateway --internet-gateway-id "$IGW_ID" --region "$REGION" 2>&1)
-        if echo "$RESULT" | grep -q "error\|Error"; then
-            echo -e "  ${RED}Fehler IGW: $RESULT${NC}"
-        else
-            echo -e "  ${GREEN}✓ IGW${NC}: $IGW_ID geloescht"
-        fi
+        classify_result "$RESULT"
+        case $? in
+            0) echo -e "  ${GREEN}✓ IGW${NC}: $IGW_ID geloescht" ;;
+            1) echo -e "  ${DIM}  IGW: $IGW_ID  [bereits geloescht]${NC}" ;;
+            2) echo -e "  ${RED}  Fehler IGW: $RESULT${NC}" ;;
+        esac
     else
         echo -e "${DIM}[5] Kein Internet Gateway – uebersprungen.${NC}"
     fi
@@ -239,12 +302,13 @@ fi
 if has_step 6; then
     echo -e "${YELLOW}[6] VPC loeschen...${NC}"
     RESULT=$(aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION" 2>&1)
-    if echo "$RESULT" | grep -q "error\|Error"; then
-        echo -e "  ${RED}Fehler VPC: $RESULT${NC}"
-        echo -e "  ${YELLOW}Tipp: Erst SG [2], Subnetze [3], RT [4], IGW [5] loeschen.${NC}"
-    else
-        echo -e "  ${GREEN}✓ VPC${NC}: $VPC_ID geloescht"
-    fi
+    classify_result "$RESULT"
+    case $? in
+        0) echo -e "  ${GREEN}✓ VPC${NC}: $VPC_ID geloescht" ;;
+        1) echo -e "  ${DIM}  VPC: $VPC_ID  [bereits geloescht]${NC}" ;;
+        2) echo -e "  ${RED}  Fehler VPC: $RESULT${NC}"
+           echo -e "  ${YELLOW}  Tipp: Erst SG [2], Subnetze [3], RT [4], IGW [5] loeschen.${NC}" ;;
+    esac
 fi
 
 # ─── 7. .env Dateien leeren ───────────────────────────────────────────────────

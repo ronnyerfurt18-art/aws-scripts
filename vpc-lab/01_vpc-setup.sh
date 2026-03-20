@@ -547,6 +547,7 @@ echo -e "${GREEN}IDs gespeichert in: $OUTPUT_FILE${NC}"
 echo ""
 
 # ─── Hinweis: Benutzerdefinierte Ports und httpd-Konfiguration ───────────
+
 HAS_EXTRA=false
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     [ -n "${SN_EXTRA_PORTS[$n]}" ] && HAS_EXTRA=true
@@ -576,4 +577,3 @@ if $HAS_EXTRA; then
     echo ""
 fi
 
-echo -e "${YELLOW}Weiter mit: ./02_ec2-setup.sh${NC}"

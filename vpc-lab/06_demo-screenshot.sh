@@ -17,6 +17,7 @@ OUTPUT_02="$SCRIPT_DIR/02_output.env"
 [ ! -f "$OUTPUT_01" ] && echo -e "${RED}Fehler: 01_output.env nicht gefunden.${NC}" && exit 1
 [ ! -f "$OUTPUT_02" ] && echo -e "${RED}Fehler: 02_output.env nicht gefunden.${NC}" && exit 1
 
+[ -f "$SCRIPT_DIR/config.env" ] && source "$SCRIPT_DIR/config.env"
 source "$OUTPUT_01"
 source "$OUTPUT_02"
 
@@ -61,9 +62,30 @@ echo ""
 # PEM-Datei ermitteln
 PEM_FILE="$SCRIPT_DIR/${KEY_NAME}.pem"
 if [ ! -f "$PEM_FILE" ]; then
-    echo -e "${YELLOW}PEM-Datei nicht gefunden unter: $PEM_FILE${NC}"
-    read -rp "Pfad zur PEM-Datei: " PEM_FILE
-    [ ! -f "$PEM_FILE" ] && echo -e "${RED}Fehler: PEM-Datei nicht gefunden.${NC}" && exit 1
+    mapfile -t PEM_FILES < <(ls "$SCRIPT_DIR"/*.pem 2>/dev/null)
+    if [ ${#PEM_FILES[@]} -eq 1 ]; then
+        PEM_FILE="${PEM_FILES[0]}"
+        echo -e "  ${YELLOW}PEM automatisch gefunden: ${CYAN}${PEM_FILE##*/}${NC}"
+    elif [ ${#PEM_FILES[@]} -gt 1 ]; then
+        echo -e "${YELLOW}Mehrere PEM-Dateien gefunden:${NC}"
+        for i in "${!PEM_FILES[@]}"; do echo -e "  [$((i+1))] ${PEM_FILES[$i]##*/}"; done
+        read -rp "Auswahl [1]: " PEM_SEL
+        PEM_FILE="${PEM_FILES[$((${PEM_SEL:-1}-1))]}"
+    else
+        echo -e "${YELLOW}Keine PEM-Datei gefunden in: $SCRIPT_DIR${NC}"
+        read -rp "Pfad zur PEM-Datei: " PEM_FILE
+        [ ! -f "$PEM_FILE" ] && echo -e "${RED}Fehler: PEM-Datei nicht gefunden.${NC}" && exit 1
+    fi
+    # Erkannten KEY_NAME in config.env speichern fuer folgende Skripte
+    DETECTED_KEY="${PEM_FILE##*/}"; DETECTED_KEY="${DETECTED_KEY%.pem}"
+    if [ -n "$DETECTED_KEY" ]; then
+        KEY_NAME="$DETECTED_KEY"
+        if grep -q "^KEY_NAME=" "$SCRIPT_DIR/config.env" 2>/dev/null; then
+            sed -i '' "s/^KEY_NAME=.*/KEY_NAME=$DETECTED_KEY/" "$SCRIPT_DIR/config.env"
+        else
+            echo "KEY_NAME=$DETECTED_KEY" >> "$SCRIPT_DIR/config.env"
+        fi
+    fi
 fi
 
 # ─── Test 1: Zugriff von AUSSEN auf private Instanz (muss scheitern) ──────────
@@ -98,10 +120,10 @@ fi
 echo ""
 
 # ─── Test 3: SSH + curl von Public auf Private ────────────────────────────────
-echo -e "${BOLD}━━━ TEST 3: Zugriff von INNEN (via Public-Instanz) auf private Instanz ━━━${NC}"
+echo -e "${BOLD}━━━ TEST 3: Zugriff von INNEN (via Public-Instanz als Jump Host) ━━━${NC}"
 echo -e "${YELLOW}Erwartet: HTTP-Antwort der privaten Instanz${NC}"
 echo ""
-echo -e "  Verbinde via SSH auf Public-Instanz ($PUBLIC_IP)..."
+echo -e "  [automatisch] SSH via Public-Instanz → curl auf Private-Instanz"
 echo -e "  \$ ssh -i ${KEY_NAME}.pem ec2-user@$PUBLIC_IP \"curl -s http://$PRIVATE_IP\""
 echo ""
 
@@ -118,6 +140,11 @@ else
     echo -e "  ${YELLOW}[FEHLER] Zugriff nicht moeglich: $RESULT${NC}"
     echo -e "  ${YELLOW}Tipp: Instanz noch nicht bereit oder SSH in Private-SG fehlt.${NC}"
 fi
+echo ""
+echo -e "${BOLD}Zum Nachvollziehen:${NC}"
+echo -e "  ${CYAN}ssh -i $PEM_FILE ec2-user@$PUBLIC_IP${NC}"
+echo -e "  Dann in der Public-Instanz:"
+echo -e "  ${CYAN}curl http://$PRIVATE_IP${NC}"
 echo ""
 
 # ─── Zusammenfassung ──────────────────────────────────────────────────────────
