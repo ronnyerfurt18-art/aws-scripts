@@ -207,9 +207,11 @@ while true; do
     echo -e "       ${DIM}→ ../s3-create-bucket.sh${NC}"
     echo -e "  ${CYAN}[15]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
     echo -e "       ${DIM}→ ../s3-sync.sh${NC}"
+    echo -e "  ${CYAN}[16]${NC} S3 Buckets anzeigen"
+    echo -e "       ${DIM}→ ../s3-list-buckets.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[16]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
+    echo -e "  ${CYAN}[17]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
     echo -e "       ${DIM}→ 05_teardown.sh  (einzeln oder alles – Auswahl im naechsten Schritt)${NC}"
     echo ""
     echo -e "  ${CYAN}[0]${NC}  Beenden"
@@ -233,7 +235,8 @@ while true; do
         13) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
         14) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
         15) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
-        16) bash "$SCRIPT_DIR/05_teardown.sh" ;;
+        16) bash "$SCRIPT_DIR/../s3-list-buckets.sh" ;;
+        17) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;

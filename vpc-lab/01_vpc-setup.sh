@@ -257,6 +257,13 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         done
         MAX_HOSTS=$(( (1 << (32 - CALC_PREFIX)) - 2 ))
 
+        # AWS erlaubt mindestens /28 (14 nutzbare Hosts)
+        if (( CALC_PREFIX > 28 )); then
+            echo -e "  ${YELLOW}Hinweis: AWS erlaubt mindestens /28 (14 nutzbare Hosts). Prefix wird auf /28 gesetzt.${NC}"
+            CALC_PREFIX=28
+            MAX_HOSTS=$(( (1 << (32 - CALC_PREFIX)) - 2 ))
+        fi
+
         # Basis-IP aus dem Vorschlag uebernehmen, nur Prefix anpassen
         SUGGEST_BASE=$(echo "$CIDR_SUGGESTION" | cut -d'/' -f1)
         CIDR_SUGGESTION="${SUGGEST_BASE}/${CALC_PREFIX}"
