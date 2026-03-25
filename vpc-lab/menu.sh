@@ -179,6 +179,10 @@ while true; do
     echo -e "       ${DIM}  Dieser Text wird per HTTP abrufbar:  curl http://<IP>${NC}"
     echo -e "       ${DIM}  Apache (httpd) wird beim Start automatisch installiert (User-Data).${NC}"
     echo ""
+    echo -e "${BOLD}─── SSH & Tunnel ────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[20]${NC} PEM uebertragen + SSH-Tunnel-Befehle anzeigen"
+    echo -e "       ${DIM}→ 12_ssh-tunnel.sh${NC}"
+    echo ""
     echo -e "${BOLD}─── Deployment ──────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[7]${NC}  httpd installieren + index.html  ${DIM}(benoetigt Port 80 offen)${NC}"
     echo -e "       ${DIM}→ 07_install-httpd.sh  (private via Jump Host)${NC}"
@@ -243,6 +247,7 @@ while true; do
         17) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         18) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
         19) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
+        20) bash "$SCRIPT_DIR/12_ssh-tunnel.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;

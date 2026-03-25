@@ -210,9 +210,87 @@ done
 
 echo ""
 echo -e "  Key Pair: ${CYAN}$KEY_NAME${NC}"
-[ -f "$SCRIPT_DIR/${KEY_NAME}.pem" ] && echo -e "  PEM-Datei: ${CYAN}$SCRIPT_DIR/${KEY_NAME}.pem${NC}"
-echo ""
-echo -e "${YELLOW}Warte ca. 2 Minuten bis die Instanzen gestartet sind.${NC}"
-echo ""
-echo -e "SSH-Zugriff auf Public Instanz:"
-echo -e "${CYAN}ssh -i $SCRIPT_DIR/${KEY_NAME}.pem ec2-user@<PUBLIC_IP>${NC}"
+PEM_PATH="$SCRIPT_DIR/${KEY_NAME}.pem"
+[ -f "$PEM_PATH" ] && echo -e "  PEM-Datei: ${CYAN}$PEM_PATH${NC}"
+
+# ─── Public Instanz und Private IP ermitteln ──────────────────────────────────
+PUBLIC_INSTANCE_ID=""
+PUBLIC_SN_NAME=""
+PRIVATE_IP_TARGET=""
+
+for ((n=1; n<=SUBNET_COUNT; n++)); do
+    SN_TYPE_VAR="SN_TYPE_$n"
+    SN_NAME_VAR="SN_NAME_$n"
+    if [ "${!SN_TYPE_VAR}" == "public" ] && [ -z "$PUBLIC_INSTANCE_ID" ]; then
+        PUBLIC_INSTANCE_ID="${INSTANCE_IDS[$n]}"
+        PUBLIC_SN_NAME="${!SN_NAME_VAR}"
+    elif [ "${!SN_TYPE_VAR}" == "private" ] && [ -z "$PRIVATE_IP_TARGET" ]; then
+        PRIVATE_IP_TARGET="${INSTANCE_IDS[$n]}"  # wird spaeter aufgeloest
+    fi
+done
+
+# ─── Auf running warten und IPs holen ────────────────────────────────────────
+if [ -n "$PUBLIC_INSTANCE_ID" ] && [ -f "$PEM_PATH" ]; then
+    echo ""
+    echo -e "${YELLOW}Warte auf Public Instanz (ec2-${PUBLIC_SN_NAME})...${NC}"
+    for ((i=1; i<=24; i++)); do
+        RESULT=$(aws ec2 describe-instances --instance-ids "$PUBLIC_INSTANCE_ID" \
+            --query "Reservations[0].Instances[0].[State.Name,PublicIpAddress,PrivateIpAddress]" \
+            --output text --region "$REGION" 2>/dev/null)
+        STATE=$(echo "$RESULT" | awk '{print $1}')
+        PUB_IP=$(echo "$RESULT" | awk '{print $2}')
+        PRIV_IP_PUB=$(echo "$RESULT" | awk '{print $3}')
+        [ "$PUB_IP" == "None" ] && PUB_IP=""
+        if [ "$STATE" == "running" ] && [ -n "$PUB_IP" ]; then
+            echo -e "  ${GREEN}✓ Bereit:${NC} $PUB_IP"
+            break
+        fi
+        echo -e "  ${DIM}[$i/24] $STATE – warte 15s...${NC}"
+        sleep 15
+    done
+
+    # Private IP der privaten Instanz holen
+    if [ -n "$PRIVATE_IP_TARGET" ]; then
+        PRIV_IP_TARGET=$(aws ec2 describe-instances --instance-ids "$PRIVATE_IP_TARGET" \
+            --query "Reservations[0].Instances[0].PrivateIpAddress" \
+            --output text --region "$REGION" 2>/dev/null)
+        [ "$PRIV_IP_TARGET" == "None" ] && PRIV_IP_TARGET=""
+    fi
+
+    # ─── PEM auf Public Instanz kopieren ─────────────────────────────────────
+    if [ -n "$PUB_IP" ]; then
+        echo ""
+        echo -e "${YELLOW}Kopiere PEM auf Public Instanz...${NC}"
+        scp -i "$PEM_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+            "$PEM_PATH" "ec2-user@${PUB_IP}:~/${KEY_NAME}.pem" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            echo -e "  ${GREEN}✓ ${KEY_NAME}.pem auf ec2-user@${PUB_IP}:~/ kopiert${NC}"
+            # Berechtigungen setzen
+            ssh -i "$PEM_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+                "ec2-user@${PUB_IP}" "chmod 400 ~/${KEY_NAME}.pem" 2>/dev/null
+        else
+            echo -e "  ${RED}✗ SCP fehlgeschlagen – manuell kopieren:${NC}"
+            echo -e "  ${CYAN}scp -i $PEM_PATH $PEM_PATH ec2-user@${PUB_IP}:~/${NC}"
+        fi
+
+        # ─── Verbindungsbefehle ausgeben ──────────────────────────────────────
+        echo ""
+        echo -e "${BOLD}─── Verbindungsbefehle ──────────────────────────────${NC}"
+        echo -e "  SSH direkt:"
+        echo -e "  ${CYAN}ssh -i $PEM_PATH ec2-user@${PUB_IP}${NC}"
+        if [ -n "$PRIV_IP_TARGET" ]; then
+            echo ""
+            echo -e "  SSH-Tunnel (Public → Private, Port 4747):"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 0.0.0.0:4747:${PRIV_IP_TARGET}:22 ec2-user@${PUB_IP} -N${NC}"
+            echo ""
+            echo -e "  Dann von Public auf Private springen:"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -p 4747 ec2-user@localhost${NC}"
+        fi
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}Warte ca. 2 Minuten bis die Instanzen gestartet sind.${NC}"
+    echo ""
+    echo -e "SSH-Zugriff auf Public Instanz:"
+    echo -e "${CYAN}ssh -i $PEM_PATH ec2-user@<PUBLIC_IP>${NC}"
+fi
