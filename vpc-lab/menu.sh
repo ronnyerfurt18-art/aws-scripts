@@ -180,48 +180,48 @@ while true; do
     echo -e "       ${DIM}  Apache (httpd) wird beim Start automatisch installiert (User-Data).${NC}"
     echo ""
     echo -e "${BOLD}─── SSH & Tunnel ────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[20]${NC} PEM uebertragen + SSH-Tunnel-Befehle anzeigen"
+    echo -e "  ${CYAN}[7]${NC}  PEM uebertragen + SSH-Tunnel-Befehle anzeigen"
     echo -e "       ${DIM}→ 12_ssh-tunnel.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Deployment ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[7]${NC}  httpd installieren + index.html  ${DIM}(benoetigt Port 80 offen)${NC}"
+    echo -e "  ${CYAN}[8]${NC}  httpd installieren + index.html  ${DIM}(benoetigt Port 80 offen)${NC}"
     echo -e "       ${DIM}→ 07_install-httpd.sh  (private via Jump Host)${NC}"
-    echo -e "  ${CYAN}[8]${NC}  index.html per SSH deployen (nur public)"
+    echo -e "  ${CYAN}[9]${NC}  index.html per SSH deployen (nur public)"
     echo -e "       ${DIM}→ 04_deploy-content.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Netzwerk ────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[9]${NC}  Security Groups verwalten  ${DIM}(Instanz-Ebene, stateful)${NC}"
+    echo -e "  ${CYAN}[10]${NC} Security Groups verwalten  ${DIM}(Instanz-Ebene, stateful)${NC}"
     echo -e "       ${DIM}→ 08_security-groups.sh  (Port 80 nachtraeglich aendern)${NC}"
-    echo -e "  ${CYAN}[10]${NC} Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
+    echo -e "  ${CYAN}[11]${NC} Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
     echo -e "       ${DIM}→ 09_network-acl.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Informationen ───────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[11]${NC} IPs und Status aller Lab-Instanzen anzeigen"
+    echo -e "  ${CYAN}[12]${NC} IPs und Status aller Lab-Instanzen anzeigen"
     echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
-    echo -e "  ${CYAN}[12]${NC} Schritt-Anleitung anzeigen  ${DIM}(Ablauf des Labs)${NC}"
+    echo -e "  ${CYAN}[13]${NC} Schritt-Anleitung anzeigen  ${DIM}(Ablauf des Labs)${NC}"
     echo -e "       ${DIM}→ 11_lab-guide.sh${NC}"
-    echo -e "  ${CYAN}[21]${NC} VPC-Diagramm generieren  ${DIM}(HTML/SVG im Browser)${NC}"
+    echo -e "  ${CYAN}[14]${NC} VPC-Diagramm generieren  ${DIM}(HTML/SVG im Browser)${NC}"
     echo -e "       ${DIM}→ 13_diagram.sh${NC}"
     echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
     echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[13]${NC} Zugriffstests fuer Screenshots"
+    echo -e "  ${CYAN}[15]${NC} Zugriffstests fuer Screenshots"
     echo -e "       ${DIM}→ 06_demo-screenshot.sh${NC}"
     echo ""
     echo -e "${BOLD}─── S3 ──────────────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[14]${NC} S3 Bucket anlegen (mit public Policy)"
+    echo -e "  ${CYAN}[16]${NC} S3 Bucket anlegen (mit public Policy)"
     echo -e "       ${DIM}→ ../s3-create-bucket.sh${NC}"
-    echo -e "  ${CYAN}[15]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
+    echo -e "  ${CYAN}[17]${NC} Lokalen Ordner mit S3 Bucket synchronisieren"
     echo -e "       ${DIM}→ ../s3-sync.sh${NC}"
-    echo -e "  ${CYAN}[16]${NC} S3 Buckets anzeigen"
+    echo -e "  ${CYAN}[18]${NC} S3 Buckets anzeigen"
     echo -e "       ${DIM}→ ../s3-list-buckets.sh${NC}"
-    echo -e "  ${CYAN}[18]${NC} JSON-Datei erstellen  ${DIM}(Name, Matrikel, Bucket ...)${NC}"
+    echo -e "  ${CYAN}[19]${NC} JSON-Datei erstellen  ${DIM}(Name, Matrikel, Bucket ...)${NC}"
     echo -e "       ${DIM}→ ../s3-student-json.sh${NC}"
-    echo -e "  ${CYAN}[19]${NC} Einzelne Datei in S3 hochladen"
+    echo -e "  ${CYAN}[20]${NC} Einzelne Datei in S3 hochladen"
     echo -e "       ${DIM}→ ../s3-upload-datei.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[17]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
+    echo -e "  ${CYAN}[21]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
     echo -e "       ${DIM}→ 05_teardown.sh  (einzeln oder alles – Auswahl im naechsten Schritt)${NC}"
     echo ""
     echo -e "  ${CYAN}[0]${NC}  Beenden"
@@ -236,21 +236,21 @@ while true; do
         4)  bash "$SCRIPT_DIR/10_ec2-manager.sh" ;;
         5)  bash "$SCRIPT_DIR/01_vpc-setup.sh" ;;
         6)  bash "$SCRIPT_DIR/02_ec2-setup.sh" ;;
-        7)  bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
-        8)  bash "$SCRIPT_DIR/04_deploy-content.sh" ;;
-        9)  bash "$SCRIPT_DIR/08_security-groups.sh" ;;
-        10) bash "$SCRIPT_DIR/09_network-acl.sh" ;;
-        11) bash "$SCRIPT_DIR/03_get-ips.sh" ;;
-        12) bash "$SCRIPT_DIR/11_lab-guide.sh" ;;
-        13) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
-        14) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
-        15) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
-        16) bash "$SCRIPT_DIR/../s3-list-buckets.sh" ;;
-        17) bash "$SCRIPT_DIR/05_teardown.sh" ;;
-        18) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
-        19) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
-        20) bash "$SCRIPT_DIR/12_ssh-tunnel.sh" ;;
-        21) bash "$SCRIPT_DIR/13_diagram.sh" ;;
+        7)  bash "$SCRIPT_DIR/12_ssh-tunnel.sh" ;;
+        8)  bash "$SCRIPT_DIR/07_install-httpd.sh" ;;
+        9)  bash "$SCRIPT_DIR/04_deploy-content.sh" ;;
+        10) bash "$SCRIPT_DIR/08_security-groups.sh" ;;
+        11) bash "$SCRIPT_DIR/09_network-acl.sh" ;;
+        12) bash "$SCRIPT_DIR/03_get-ips.sh" ;;
+        13) bash "$SCRIPT_DIR/11_lab-guide.sh" ;;
+        14) bash "$SCRIPT_DIR/13_diagram.sh" ;;
+        15) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
+        16) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
+        17) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
+        18) bash "$SCRIPT_DIR/../s3-list-buckets.sh" ;;
+        19) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
+        20) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
+        21) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;
