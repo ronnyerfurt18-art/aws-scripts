@@ -70,6 +70,27 @@ echo -e "  ${GREEN}✓ Block Public Access deaktiviert${NC}"
 
 # ─── 3. Bucket Policy setzen ──────────────────────────────────────────────────
 echo -e "${YELLOW}[3/3] Bucket Policy setzen...${NC}"
+echo ""
+echo -e "  Erlaubte Dateiformate eingeben (kommagetrennt, leer = alle erlaubt)"
+echo -e "  ${DIM}Beispiel: html,jpg,png,pdf  oder einfach Enter fuer alle${NC}"
+read -rp "  Formate: " FORMAT_INPUT
+
+# ─── Ressourcen-Liste aufbauen ────────────────────────────────────────────────
+RESOURCES=""
+if [ -z "$FORMAT_INPUT" ]; then
+    RESOURCES="\"arn:aws:s3:::${BUCKET}/*\""
+    FORMAT_MSG="alle Formate"
+else
+    IFS=',' read -ra FORMATS <<< "$FORMAT_INPUT"
+    RESOURCE_LIST=()
+    for FMT in "${FORMATS[@]}"; do
+        FMT=$(echo "$FMT" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sed 's/^\.//')
+        [ -n "$FMT" ] && RESOURCE_LIST+=("\"arn:aws:s3:::${BUCKET}/*.${FMT}\"")
+    done
+    RESOURCES=$(IFS=','; echo "${RESOURCE_LIST[*]}")
+    FORMAT_MSG="${FORMAT_INPUT//,/, }"
+fi
+
 POLICY=$(cat <<EOF
 {
     "Version": "2012-10-17",
@@ -78,7 +99,7 @@ POLICY=$(cat <<EOF
             "Effect": "Allow",
             "Principal": "*",
             "Action": "s3:GetObject",
-            "Resource": "arn:aws:s3:::${BUCKET}/*"
+            "Resource": [$RESOURCES]
         }
     ]
 }
@@ -89,7 +110,7 @@ RESULT=$(aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$POLICY" --reg
 if echo "$RESULT" | grep -q "error\|Error"; then
     echo -e "  ${RED}Fehler: $RESULT${NC}"; exit 1
 fi
-echo -e "  ${GREEN}✓ Bucket Policy gesetzt (public read)${NC}"
+echo -e "  ${GREEN}✓ Bucket Policy gesetzt (public read: $FORMAT_MSG)${NC}"
 
 echo ""
 echo -e "${BOLD}=== Bucket bereit ===${NC}"

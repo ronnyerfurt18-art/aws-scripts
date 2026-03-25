@@ -209,6 +209,10 @@ while true; do
     echo -e "       ${DIM}→ ../s3-sync.sh${NC}"
     echo -e "  ${CYAN}[16]${NC} S3 Buckets anzeigen"
     echo -e "       ${DIM}→ ../s3-list-buckets.sh${NC}"
+    echo -e "  ${CYAN}[18]${NC} JSON-Datei erstellen  ${DIM}(Name, Matrikel, Bucket ...)${NC}"
+    echo -e "       ${DIM}→ ../s3-student-json.sh${NC}"
+    echo -e "  ${CYAN}[19]${NC} Einzelne Datei in S3 hochladen"
+    echo -e "       ${DIM}→ ../s3-upload-datei.sh${NC}"
     echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[17]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
@@ -237,6 +241,8 @@ while true; do
         15) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
         16) bash "$SCRIPT_DIR/../s3-list-buckets.sh" ;;
         17) bash "$SCRIPT_DIR/05_teardown.sh" ;;
+        18) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
+        19) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;

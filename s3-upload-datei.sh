@@ -11,24 +11,39 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Dateipfad abfragen
+# ─── Datei auswaehlen ─────────────────────────────────────────────────────────
 echo ""
-read -rp "Verzeichnispfad zur Datei (z.B. /Users/MacPro/Downloads): " FILE_DIR
+read -rp "Verzeichnis [${HOME}]: " FILE_DIR
+FILE_DIR="${FILE_DIR:-$HOME}"
 
-if [ -z "$FILE_DIR" ]; then
-    echo -e "${RED}Fehler: Kein Pfad eingegeben.${NC}"
+if [ ! -d "$FILE_DIR" ]; then
+    echo -e "${RED}Fehler: Verzeichnis '$FILE_DIR' nicht gefunden.${NC}"
     exit 1
 fi
 
-# Dateiname abfragen
-read -rp "Dateiname mit Endung (z.B. bild.png): " FILE_NAME
+LOCAL_FILES=()
+while IFS= read -r f; do
+    LOCAL_FILES+=("$f")
+done < <(find "$FILE_DIR" -maxdepth 1 -type f 2>/dev/null | sort)
 
-if [ -z "$FILE_NAME" ]; then
-    echo -e "${RED}Fehler: Kein Dateiname eingegeben.${NC}"
-    exit 1
+if [ ${#LOCAL_FILES[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${CYAN}Dateien in $FILE_DIR:${NC}"
+    for ((j=0; j<${#LOCAL_FILES[@]}; j++)); do
+        echo -e "  [$(( j+1 ))] $(basename "${LOCAL_FILES[$j]}")"
+    done
+    echo ""
+    read -rp "Datei auswaehlen (Nummer): " FILE_SEL
+    if [[ "$FILE_SEL" =~ ^[1-9][0-9]*$ ]] && [ "$FILE_SEL" -le "${#LOCAL_FILES[@]}" ]; then
+        FILE="${LOCAL_FILES[$(( FILE_SEL-1 ))]}"
+    else
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; exit 1
+    fi
+else
+    echo -e "${YELLOW}Keine Dateien in '$FILE_DIR' gefunden.${NC}"; exit 1
 fi
 
-FILE="${FILE_DIR%/}/${FILE_NAME}"
+[ -z "$FILE" ] && echo -e "${RED}Fehler: Kein Pfad eingegeben.${NC}" && exit 1
 
 # Datei existiert?
 if [ ! -f "$FILE" ]; then
