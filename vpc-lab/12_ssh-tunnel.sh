@@ -123,5 +123,10 @@ if [ -n "$PRIV_IP_TARGET" ]; then
     echo -e "  ${BOLD}Optional – Direkt auf Private springen (von Public):${NC}"
     echo ""
     echo -e "      ${CYAN}ssh -i ~/${KEY_NAME}.pem ec2-user@${PRIV_IP_TARGET}${NC}"
+    echo ""
+    echo -e "  ────────────────────────────────────────────────"
+    echo -e "  ${BOLD}Tunnel beenden (auf Public Instanz):${NC}"
+    echo ""
+    echo -e "      ${CYAN}ssh -i $PEM_PATH ec2-user@${PUB_IP} \"kill \\\$(lsof -ti:4747)\"${NC}"
 fi
 echo ""
