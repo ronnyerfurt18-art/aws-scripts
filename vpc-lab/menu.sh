@@ -200,6 +200,8 @@ while true; do
     echo -e "       ${DIM}→ 03_get-ips.sh${NC}"
     echo -e "  ${CYAN}[12]${NC} Schritt-Anleitung anzeigen  ${DIM}(Ablauf des Labs)${NC}"
     echo -e "       ${DIM}→ 11_lab-guide.sh${NC}"
+    echo -e "  ${CYAN}[21]${NC} VPC-Diagramm generieren  ${DIM}(HTML/SVG im Browser)${NC}"
+    echo -e "       ${DIM}→ 13_diagram.sh${NC}"
     echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
     echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
@@ -248,6 +250,7 @@ while true; do
         18) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
         19) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
         20) bash "$SCRIPT_DIR/12_ssh-tunnel.sh" ;;
+        21) bash "$SCRIPT_DIR/13_diagram.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;

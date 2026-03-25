@@ -280,10 +280,12 @@ if [ -n "$PUBLIC_INSTANCE_ID" ] && [ -f "$PEM_PATH" ]; then
         echo -e "  ${CYAN}ssh -i $PEM_PATH ec2-user@${PUB_IP}${NC}"
         if [ -n "$PRIV_IP_TARGET" ]; then
             echo ""
-            echo -e "  SSH-Tunnel (Public → Private, Port 4747):"
-            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 0.0.0.0:4747:${PRIV_IP_TARGET}:22 ec2-user@${PUB_IP} -N${NC}"
+            echo -e "  SSH-Tunnel HTTP-Test (Private Port 80 → lokal 4747):"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:80 ec2-user@${PUB_IP} -N &${NC}"
+            echo -e "  ${CYAN}curl http://localhost:4747${NC}  ${DIM}→ erwartet: hello private${NC}"
             echo ""
-            echo -e "  Dann von Public auf Private springen:"
+            echo -e "  SSH-Tunnel direkt auf Private:"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:22 ec2-user@${PUB_IP} -N &${NC}"
             echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -p 4747 ec2-user@localhost${NC}"
         fi
     fi
