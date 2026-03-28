@@ -243,18 +243,30 @@ read -rp "Auswahl: " RAW_SEL
 
 # Auswahl aufloesen
 if [[ "$RAW_SEL" =~ ^[Aa]$ ]]; then
-    STEPS=(1 2 3 4 5 6 7 8)
+    SEL_SET="1 2 3 4 5 6 7 8"
 else
+    SEL_SET=""
     IFS=',' read -ra PARTS <<< "$RAW_SEL"
-    STEPS=()
     for P in "${PARTS[@]}"; do
-        P=$(echo "$P" | tr -d ' ')
-        [[ "$P" =~ ^[1-8]$ ]] && STEPS+=("$P")
+        P=$(echo "$P" | tr -d ' \r')
+        [[ "$P" =~ ^[1-8]$ ]] && SEL_SET="$SEL_SET $P"
     done
-    if [ ${#STEPS[@]} -eq 0 ]; then
+    if [ -z "$SEL_SET" ]; then
         echo -e "${RED}Keine gueltige Auswahl.${NC}"; exit 1
     fi
 fi
+
+# Abhaengigkeiten automatisch ergaenzen:
+# Subnetz [3] benoetigt SG [2] vorher
+# VPC [6] benoetigt SG [2], SN [3], RT [4], IGW [5] vorher
+[[ "$SEL_SET" == *" 3"* || "$SEL_SET" == *"3 "* || "$SEL_SET" =~ ^3$ ]] && SEL_SET="$SEL_SET 2"
+[[ "$SEL_SET" == *" 6"* || "$SEL_SET" == *"6 "* || "$SEL_SET" =~ ^6$ ]] && SEL_SET="$SEL_SET 2 3 4 5"
+
+# Duplikate entfernen, in fester Reihenfolge 1-8 sortieren (Bash 3.2 kompatibel)
+STEPS=()
+for S in 1 2 3 4 5 6 7 8; do
+    [[ " $SEL_SET " == *" $S "* ]] && STEPS[${#STEPS[@]}]="$S"
+done
 
 # Zusammenfassung
 echo ""
