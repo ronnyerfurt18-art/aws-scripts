@@ -135,6 +135,25 @@ else
     echo -e "  ${DIM}[6] VPC  $VPC_ID  [bereits geloescht]${NC}"
 fi
 
+# Custom ACLs
+echo ""
+if $VPC_EXISTS; then
+    CUSTOM_ACLS=$(aws ec2 describe-network-acls \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=default,Values=false" \
+        --query "NetworkAcls[].NetworkAclId" \
+        --output text --region "$REGION" 2>/dev/null | tr '\t' ' ')
+    if [ -n "$CUSTOM_ACLS" ]; then
+        echo -e "  [8] ACL  Benutzerdefinierte ACLs loeschen:"
+        for AID in $CUSTOM_ACLS; do
+            echo -e "       ${CYAN}$AID${NC}"
+        done
+    else
+        echo -e "  ${DIM}[8] ACL  – keine benutzerdefinierten ACLs (nur Standard)${NC}"
+    fi
+else
+    echo -e "  ${DIM}[8] ACL  – VPC nicht mehr vorhanden${NC}"
+fi
+
 # ENV
 echo ""
 echo -e "  [7] .env Dateien leeren  ${DIM}(01_output.env + 02_output.env)${NC}"
@@ -151,13 +170,13 @@ read -rp "Auswahl: " RAW_SEL
 
 # Auswahl aufloesen
 if [[ "$RAW_SEL" =~ ^[Aa]$ ]]; then
-    STEPS=(1 2 3 4 5 6 7)
+    STEPS=(1 2 3 4 5 6 7 8)
 else
     IFS=',' read -ra PARTS <<< "$RAW_SEL"
     STEPS=()
     for P in "${PARTS[@]}"; do
         P=$(echo "$P" | tr -d ' ')
-        [[ "$P" =~ ^[1-7]$ ]] && STEPS+=("$P")
+        [[ "$P" =~ ^[1-8]$ ]] && STEPS+=("$P")
     done
     if [ ${#STEPS[@]} -eq 0 ]; then
         echo -e "${RED}Keine gueltige Auswahl.${NC}"; exit 1
@@ -176,6 +195,7 @@ for S in "${STEPS[@]}"; do
         5) echo -e "  ${RED}✗${NC} Internet Gateway loeschen" ;;
         6) echo -e "  ${RED}✗${NC} VPC loeschen" ;;
         7) echo -e "  ${RED}✗${NC} .env Dateien leeren" ;;
+        8) echo -e "  ${RED}✗${NC} Benutzerdefinierte ACLs loeschen" ;;
     esac
 done
 echo ""
@@ -309,6 +329,48 @@ if has_step 6; then
         2) echo -e "  ${RED}  Fehler VPC: $RESULT${NC}"
            echo -e "  ${YELLOW}  Tipp: Erst SG [2], Subnetze [3], RT [4], IGW [5] loeschen.${NC}" ;;
     esac
+fi
+
+# ─── 8. Benutzerdefinierte ACLs loeschen ─────────────────────────────────────
+if has_step 8; then
+    echo -e "${YELLOW}[8] Benutzerdefinierte ACLs loeschen...${NC}"
+    CUSTOM_ACLS=$(aws ec2 describe-network-acls \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=default,Values=false" \
+        --query "NetworkAcls[].NetworkAclId" \
+        --output text --region "$REGION" 2>/dev/null | tr '\t' ' ')
+
+    if [ -z "$CUSTOM_ACLS" ]; then
+        echo -e "  ${DIM}Keine benutzerdefinierten ACLs gefunden.${NC}"
+    else
+        # Standard-ACL des VPC ermitteln (fuer Reassoziation)
+        DEFAULT_ACL=$(aws ec2 describe-network-acls \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=default,Values=true" \
+            --query "NetworkAcls[0].NetworkAclId" \
+            --output text --region "$REGION" 2>/dev/null)
+
+        for AID in $CUSTOM_ACLS; do
+            # Zugeordnete Subnetze zuerst zur Standard-ACL verschieben
+            ASSOC_IDS=$(aws ec2 describe-network-acls --network-acl-ids "$AID" \
+                --query "NetworkAcls[0].Associations[].NetworkAclAssociationId" \
+                --output text --region "$REGION" 2>/dev/null | tr '\t' ' ')
+
+            for ASSOC_ID in $ASSOC_IDS; do
+                [ -z "$ASSOC_ID" ] || [ "$ASSOC_ID" == "None" ] && continue
+                aws ec2 replace-network-acl-association \
+                    --association-id "$ASSOC_ID" \
+                    --network-acl-id "$DEFAULT_ACL" \
+                    --region "$REGION" > /dev/null 2>&1
+            done
+
+            RESULT=$(aws ec2 delete-network-acl --network-acl-id "$AID" --region "$REGION" 2>&1)
+            classify_result "$RESULT"
+            case $? in
+                0) echo -e "  ${GREEN}✓ ACL${NC}: $AID geloescht" ;;
+                1) echo -e "  ${DIM}  ACL: $AID  [bereits geloescht]${NC}" ;;
+                2) echo -e "  ${RED}  Fehler ACL $AID: $RESULT${NC}" ;;
+            esac
+        done
+    fi
 fi
 
 # ─── 7. .env Dateien leeren ───────────────────────────────────────────────────
