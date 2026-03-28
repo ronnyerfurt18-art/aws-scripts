@@ -200,10 +200,9 @@ cat >> "$OUT_FILE" <<HTMLEOF
 </html>
 HTMLEOF
 
-echo -e "${GREEN}✓ Diagramm erstellt:${NC} ${CYAN}$OUT_FILE${NC}"
+echo -e "${GREEN}✓ Diagramm erstellt:${NC}"
 echo ""
-echo -e "Im Browser oeffnen:"
-echo -e "  ${CYAN}open $OUT_FILE${NC}"
+echo -e "  ${CYAN}file://$OUT_FILE${NC}"
 echo ""
 
 # Automatisch oeffnen
