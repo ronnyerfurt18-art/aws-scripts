@@ -30,24 +30,24 @@ show_overview() {
     echo ""
 
     ACL_LIST=$(aws ec2 describe-network-acls \
-        --filters "Name=vpc-id,Values=$VPC_ID" \
-        --query "NetworkAcls[].{ID:NetworkAclId,Default:IsDefault,Subnets:Associations[].SubnetId}" \
+        --query "NetworkAcls[].{ID:NetworkAclId,Default:IsDefault,VpcId:VpcId,Subnets:Associations[].SubnetId}" \
         --output json --region "$REGION" 2>/dev/null)
 
     ACL_COUNT=$(echo "$ACL_LIST" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
 
-    declare -ga ACL_IDS_LIST
     ACL_IDS_LIST=()
+    ACL_IDS_LIST[0]=""
 
     for ((i=0; i<ACL_COUNT; i++)); do
         ACL_ID=$(echo "$ACL_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)[$i]['ID'])" 2>/dev/null)
         IS_DEFAULT=$(echo "$ACL_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)[$i]['Default'])" 2>/dev/null)
-        ACL_IDS_LIST+=("$ACL_ID")
+        ACL_VPC=$(echo "$ACL_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin)[$i]['VpcId'])" 2>/dev/null)
+        ACL_IDS_LIST[$i]="$ACL_ID"
 
         DEFAULT_LABEL=""
         [ "$IS_DEFAULT" == "True" ] && DEFAULT_LABEL="${DIM} [Standard-ACL]${NC}"
 
-        echo -e "  ${CYAN}[$((i+1))]${NC} ${BOLD}$ACL_ID${NC}$DEFAULT_LABEL"
+        echo -e "  ${CYAN}[$((i+1))]${NC} ${BOLD}$ACL_ID${NC}$DEFAULT_LABEL  ${DIM}VPC: $ACL_VPC${NC}"
 
         # Zugeordnete Subnetze
         SUBNET_IDS=$(echo "$ACL_LIST" | python3 -c "
@@ -74,12 +74,12 @@ print('\n'.join(s for s in subnets if s))
             echo -e "      ${DIM}↳ Kein Subnetz zugeordnet${NC}"
         fi
 
-        # Inbound-Regeln
+        # Inbound-Regeln  (text-Output alphabetisch: Action,CIDR,From,Nr,Proto,To)
         echo -e "      ${DIM}Inbound:${NC}"
         aws ec2 describe-network-acls --network-acl-ids "$ACL_ID" \
-            --query "NetworkAcls[0].Entries[?Egress==\`false\`]|sort_by(@,&RuleNumber)[].{Nr:RuleNumber,Proto:Protocol,Action:RuleAction,From:PortRange.From,To:PortRange.To,CIDR:CidrBlock}" \
+            --query "NetworkAcls[0].Entries[?Egress==\`false\`]|sort_by(@,&RuleNumber)[].{Action:RuleAction,CIDR:CidrBlock,From:PortRange.From,Nr:RuleNumber,Proto:Protocol,To:PortRange.To}" \
             --output text --region "$REGION" 2>/dev/null | \
-        while IFS=$'\t' read -r FROM TO NR PROTO ACTION CIDR; do
+        while IFS=$'\t' read -r ACTION CIDR FROM NR PROTO TO; do
             [ -z "$NR" ] && continue
             [ "$ACTION" == "allow" ] && A="${GREEN}ALLOW${NC}" || A="${RED}DENY${NC}"
             [ "$PROTO" == "-1" ] && PORT_INFO="Alle" || PORT_INFO="Port $FROM${TO:+-$TO}"
@@ -87,12 +87,12 @@ print('\n'.join(s for s in subnets if s))
             echo -e "      ${DIM}  Regel $NR: $A  $PORT_INFO  von  $CIDR${NC}"
         done
 
-        # Outbound-Regeln
+        # Outbound-Regeln  (text-Output alphabetisch: Action,CIDR,From,Nr,Proto,To)
         echo -e "      ${DIM}Outbound:${NC}"
         aws ec2 describe-network-acls --network-acl-ids "$ACL_ID" \
-            --query "NetworkAcls[0].Entries[?Egress==\`true\`]|sort_by(@,&RuleNumber)[].{Nr:RuleNumber,Proto:Protocol,Action:RuleAction,From:PortRange.From,To:PortRange.To,CIDR:CidrBlock}" \
+            --query "NetworkAcls[0].Entries[?Egress==\`true\`]|sort_by(@,&RuleNumber)[].{Action:RuleAction,CIDR:CidrBlock,From:PortRange.From,Nr:RuleNumber,Proto:Protocol,To:PortRange.To}" \
             --output text --region "$REGION" 2>/dev/null | \
-        while IFS=$'\t' read -r FROM TO NR PROTO ACTION CIDR; do
+        while IFS=$'\t' read -r ACTION CIDR FROM NR PROTO TO; do
             [ -z "$NR" ] && continue
             [ "$ACTION" == "allow" ] && A="${GREEN}ALLOW${NC}" || A="${RED}DENY${NC}"
             [ "$PROTO" == "-1" ] && PORT_INFO="Alle" || PORT_INFO="Port $FROM${TO:+-$TO}"
@@ -269,9 +269,9 @@ remove_rule() {
     echo ""
     echo -e "  Bestehende $DIR_LABEL-Regeln:"
     aws ec2 describe-network-acls --network-acl-ids "$SELECTED_ACL_ID" \
-        --query "NetworkAcls[0].Entries[?Egress==\`$EGRESS\`]|sort_by(@,&RuleNumber)[].{Nr:RuleNumber,Proto:Protocol,Action:RuleAction,CIDR:CidrBlock}" \
+        --query "NetworkAcls[0].Entries[?Egress==\`$EGRESS\`]|sort_by(@,&RuleNumber)[].{Action:RuleAction,CIDR:CidrBlock,Nr:RuleNumber,Proto:Protocol}" \
         --output text --region "$REGION" 2>/dev/null | \
-    while IFS=$'\t' read -r CIDR NR PROTO ACTION; do
+    while IFS=$'\t' read -r ACTION CIDR NR PROTO; do
         [ -z "$NR" ] && continue
         [ "$ACTION" == "allow" ] && A="${GREEN}ALLOW${NC}" || A="${RED}DENY${NC}"
         [ "$NR" == "32767" ] && echo -e "    Regel $NR: $A  Alle  (Standard – nicht löschbar)" && continue
