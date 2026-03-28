@@ -254,7 +254,7 @@ read -rp "Auswahl: " RAW_SEL
 
 # Auswahl aufloesen
 if [[ "$RAW_SEL" =~ ^[Aa]$ ]]; then
-    $EC2_FOUND && SEL_SET="1 2 3 4 5 6 7 8" || SEL_SET="2 3 4 5 6 7 8"
+    SEL_SET="1 2 3 4 5 6 7 8"
 else
     SEL_SET=""
     IFS=',' read -ra PARTS <<< "$RAW_SEL"
