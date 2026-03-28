@@ -44,8 +44,9 @@ done
 echo ""
 echo -e "${BOLD}─── Subnetz-Konfiguration ───────────────────────${NC}"
 
-declare -a SN_NAMES SN_CIDRS SN_TYPES
+declare -a SN_NAMES SN_CIDRS SN_TYPES SN_HAS_IGW
 HAS_PUBLIC=false
+NEEDS_IGW=false
 
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     echo ""
@@ -69,9 +70,18 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     read -rp "  Auswahl [1/2]: " SN_TYPE_SEL
 
     case "$SN_TYPE_SEL" in
-        1) SN_TYPE="public"; HAS_PUBLIC=true ;;
-        2) SN_TYPE="private" ;;
-        *) echo -e "${RED}Ungültige Auswahl, setze auf Private.${NC}"; SN_TYPE="private" ;;
+        1) SN_TYPE="public"; HAS_PUBLIC=true; NEEDS_IGW=true; SN_HAS_IGW[$n]=true ;;
+        2) SN_TYPE="private"
+           read -rp "  Internet Gateway für dieses Private Subnetz? [j/N]: " SN_IGW_SEL
+           if [[ "$SN_IGW_SEL" =~ ^[JjYy]$ ]]; then
+               SN_HAS_IGW[$n]=true
+               NEEDS_IGW=true
+               echo -e "  ${YELLOW}Hinweis: Dieses Private Subnetz erhält eine Route über das Internet Gateway.${NC}"
+           else
+               SN_HAS_IGW[$n]=false
+           fi
+           ;;
+        *) echo -e "${RED}Ungültige Auswahl, setze auf Private.${NC}"; SN_TYPE="private"; SN_HAS_IGW[$n]=false ;;
     esac
 
     SN_NAMES[$n]="$SN_NAME"
@@ -84,11 +94,17 @@ echo ""
 echo -e "${BOLD}─── Zusammenfassung ─────────────────────────────${NC}"
 echo -e "  Region:            ${CYAN}$REGION${NC}"
 echo -e "  VPC:               ${CYAN}$VPC_CIDR${NC}  ($VPC_NAME)"
-echo -e "  Internet Gateway:  ${CYAN}$IGW_NAME${NC}  ($( $HAS_PUBLIC && echo 'wird angelegt' || echo 'wird NICHT benötigt'))"
+echo -e "  Internet Gateway:  ${CYAN}$IGW_NAME${NC}  ($( $NEEDS_IGW && echo 'wird angelegt' || echo 'wird NICHT benötigt'))"
 echo -e "  Instance Type:     ${CYAN}$INSTANCE_TYPE${NC}"
 echo ""
 for ((n=1; n<=SUBNET_COUNT; n++)); do
-    TYPE_LABEL=$( [ "${SN_TYPES[$n]}" == "public" ] && echo -e "${GREEN}Public${NC}" || echo -e "${RED}Private${NC}" )
+    if [ "${SN_TYPES[$n]}" == "public" ]; then
+        TYPE_LABEL="${GREEN}Public${NC}"
+    elif [ "${SN_HAS_IGW[$n]}" == "true" ]; then
+        TYPE_LABEL="${RED}Private${NC} ${YELLOW}(+IGW)${NC}"
+    else
+        TYPE_LABEL="${RED}Private${NC}"
+    fi
     echo -e "  Subnetz $n: ${CYAN}${SN_NAMES[$n]}${NC}  ${SN_CIDRS[$n]}  → $TYPE_LABEL"
     echo -e "    Route Table: rt-${SN_NAMES[$n]}"
 done
@@ -140,7 +156,7 @@ done
 
 # ─── 3. Internet Gateway (nur wenn Public-Subnetz vorhanden) ──────────────────
 IGW_ID=""
-if $HAS_PUBLIC; then
+if $NEEDS_IGW; then
     echo -e "${YELLOW}[3] Internet Gateway erstellen und anhängen...${NC}"
     IGW_ID=$(aws ec2 create-internet-gateway \
         --region "$REGION" \
@@ -155,7 +171,7 @@ if $HAS_PUBLIC; then
 
     echo -e "  ${GREEN}$IGW_NAME${NC}: $IGW_ID → angehängt an $VPC_ID"
 else
-    echo -e "${YELLOW}[3] Kein Internet Gateway benötigt (keine Public Subnetze).${NC}"
+    echo -e "${YELLOW}[3] Kein Internet Gateway benötigt.${NC}"
 fi
 
 # ─── 4. Routingtabellen ───────────────────────────────────────────────────────
@@ -177,17 +193,21 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         --subnet-id "${SUBNET_IDS[$n]}" \
         --region "$REGION" > /dev/null
 
-    if [ "${SN_TYPES[$n]}" == "public" ] && [ -n "$IGW_ID" ]; then
+    if [ "${SN_HAS_IGW[$n]}" == "true" ] && [ -n "$IGW_ID" ]; then
         aws ec2 create-route \
             --route-table-id "$RT_ID" \
             --destination-cidr-block 0.0.0.0/0 \
             --gateway-id "$IGW_ID" \
             --region "$REGION" > /dev/null
-        echo -e "  ${GREEN}$RT_NAME${NC}: $RT_ID → 0.0.0.0/0 via IGW"
 
-        aws ec2 modify-subnet-attribute \
-            --subnet-id "${SUBNET_IDS[$n]}" \
-            --map-public-ip-on-launch --region "$REGION"
+        if [ "${SN_TYPES[$n]}" == "public" ]; then
+            aws ec2 modify-subnet-attribute \
+                --subnet-id "${SUBNET_IDS[$n]}" \
+                --map-public-ip-on-launch --region "$REGION"
+            echo -e "  ${GREEN}$RT_NAME${NC}: $RT_ID → 0.0.0.0/0 via IGW (Public, auto-assign IP)"
+        else
+            echo -e "  ${GREEN}$RT_NAME${NC}: $RT_ID → 0.0.0.0/0 via IGW (Private + IGW)"
+        fi
     else
         echo -e "  ${GREEN}$RT_NAME${NC}: $RT_ID → nur lokaler Traffic"
     fi

@@ -228,8 +228,8 @@ done
 echo ""
 echo -e "${BOLD}─── Subnetz-Konfiguration ───────────────────────${NC}"
 
-declare -a SN_NAMES SN_CIDRS SN_TYPES
-HAS_PUBLIC=true  # Immer true: alle Subnetze erhalten public IP, Zugriff via SG geregelt
+declare -a SN_NAMES SN_CIDRS SN_TYPES SN_HAS_IGW
+NEEDS_IGW=false
 
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     echo ""
@@ -334,10 +334,19 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     read -rp "  Auswahl [1/2/3]: " SN_TYPE_SEL
 
     case "$SN_TYPE_SEL" in
-        1) SN_TYPE="public" ;;
-        2) SN_TYPE="private" ;;
-        3) SN_TYPE="none" ;;
-        *) SN_TYPE="private" ;;
+        1) SN_TYPE="public"; SN_HAS_IGW[$n]=true; NEEDS_IGW=true ;;
+        2) SN_TYPE="private"
+           read -rp "  Internet Gateway fuer dieses Private Subnetz? [j/N]: " SN_IGW_SEL
+           if [[ "$SN_IGW_SEL" =~ ^[JjYy]$ ]]; then
+               SN_HAS_IGW[$n]=true
+               NEEDS_IGW=true
+               echo -e "  ${YELLOW}Hinweis: Dieses Private Subnetz erhaelt eine Route ueber das Internet Gateway.${NC}"
+           else
+               SN_HAS_IGW[$n]=false
+           fi
+           ;;
+        3) SN_TYPE="none"; SN_HAS_IGW[$n]=false ;;
+        *) SN_TYPE="private"; SN_HAS_IGW[$n]=false ;;
     esac
 
     # ─── Benutzerdefinierte Ports ────────────────────────────────────────────
@@ -358,12 +367,17 @@ echo ""
 echo -e "${BOLD}─── Zusammenfassung ─────────────────────────────${NC}"
 echo -e "  Region:  ${CYAN}$REGION${NC}"
 echo -e "  VPC:     ${CYAN}$VPC_CIDR${NC}  ($VPC_NAME)"
-echo -e "  IGW:     ${CYAN}$IGW_NAME${NC}  (wird immer angelegt – alle Instanzen erhalten public IP)"
+echo -e "  IGW:     ${CYAN}$IGW_NAME${NC}  ($( $NEEDS_IGW && echo 'wird angelegt' || echo 'wird NICHT benoetigt'))"
 echo ""
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     case "${SN_TYPES[$n]}" in
         public)  T="${GREEN}Public${NC}" ;;
-        private) T="${RED}Private${NC}" ;;
+        private)
+            if [ "${SN_HAS_IGW[$n]}" == "true" ]; then
+                T="${RED}Private${NC} ${YELLOW}(+IGW)${NC}"
+            else
+                T="${RED}Private${NC}"
+            fi ;;
         none)    T="${YELLOW}Keine Zuweisung${NC}" ;;
     esac
     echo -e "  Subnetz $n: ${CYAN}${SN_NAMES[$n]}${NC}  ${SN_CIDRS[$n]}  → $T"
@@ -417,17 +431,20 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
 done
 
 # ─── 3. Internet Gateway ──────────────────────────────────────────────────────
-echo -e "${YELLOW}[3/5] Internet Gateway erstellen...${NC}"
-IGW_ID=$(aws ec2 create-internet-gateway \
-    --region "$REGION" --query "InternetGateway.InternetGatewayId" --output text 2>&1)
+if $NEEDS_IGW; then
+    echo -e "${YELLOW}[3/5] Internet Gateway erstellen...${NC}"
+    IGW_ID=$(aws ec2 create-internet-gateway \
+        --region "$REGION" --query "InternetGateway.InternetGatewayId" --output text 2>&1)
 
-if [[ "$IGW_ID" != igw-* ]]; then
-    rollback "Internet Gateway konnte nicht erstellt werden: $IGW_ID"
+    if [[ "$IGW_ID" != igw-* ]]; then
+        rollback "Internet Gateway konnte nicht erstellt werden: $IGW_ID"
+    fi
+    aws ec2 create-tags --resources "$IGW_ID" --tags Key=Name,Value="$IGW_NAME" --region "$REGION"
+    aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" --region "$REGION"
+    echo -e "  ${GREEN}✓ $IGW_NAME${NC}: $IGW_ID"
+else
+    echo -e "${YELLOW}[3/5] Kein Internet Gateway benoetigt.${NC}"
 fi
-aws ec2 create-tags --resources "$IGW_ID" --tags Key=Name,Value="$IGW_NAME" --region "$REGION"
-aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" --region "$REGION"
-echo -e "  ${GREEN}✓ $IGW_NAME${NC}: $IGW_ID"
-echo -e "  ${CYAN}Alle Subnetze erhalten public IP – Zugriff wird per Security Group geregelt.${NC}"
 
 # ─── 4. Routingtabellen ───────────────────────────────────────────────────────
 echo -e "${YELLOW}[4/5] Routingtabellen erstellen...${NC}"
@@ -444,15 +461,19 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     aws ec2 create-tags --resources "$RT_ID" --tags Key=Name,Value="$RT_NAME" --region "$REGION"
     aws ec2 associate-route-table --route-table-id "$RT_ID" --subnet-id "${SUBNET_IDS[$n]}" --region "$REGION" > /dev/null
 
-    # Alle Subnetze: Route zum IGW + public IP aktivieren
-    aws ec2 create-route --route-table-id "$RT_ID" \
-        --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" --region "$REGION" > /dev/null
-    aws ec2 modify-subnet-attribute --subnet-id "${SUBNET_IDS[$n]}" --map-public-ip-on-launch --region "$REGION"
+    if [ "${SN_HAS_IGW[$n]}" == "true" ] && [ -n "$IGW_ID" ]; then
+        aws ec2 create-route --route-table-id "$RT_ID" \
+            --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" --region "$REGION" > /dev/null
+        aws ec2 modify-subnet-attribute --subnet-id "${SUBNET_IDS[$n]}" --map-public-ip-on-launch --region "$REGION"
+        IGW_LABEL="→ IGW"
+    else
+        IGW_LABEL="→ nur lokal"
+    fi
 
     case "${SN_TYPES[$n]}" in
-        public)  echo -e "  ${GREEN}✓ $RT_NAME${NC}: $RT_ID → IGW  |  SG: HTTP+SSH von ueberall" ;;
-        private) echo -e "  ${GREEN}✓ $RT_NAME${NC}: $RT_ID → IGW  |  SG: HTTP+SSH nur aus VPC" ;;
-        none)    echo -e "  ${YELLOW}✓ $RT_NAME${NC}: $RT_ID → IGW  |  SG: keine Regeln (isoliert)" ;;
+        public)  echo -e "  ${GREEN}✓ $RT_NAME${NC}: $RT_ID $IGW_LABEL  |  SG: HTTP+SSH von ueberall" ;;
+        private) echo -e "  ${GREEN}✓ $RT_NAME${NC}: $RT_ID $IGW_LABEL  |  SG: HTTP+SSH nur aus VPC" ;;
+        none)    echo -e "  ${YELLOW}✓ $RT_NAME${NC}: $RT_ID $IGW_LABEL  |  SG: keine Regeln (isoliert)" ;;
     esac
     RT_IDS[$n]="$RT_ID"
 done
@@ -533,6 +554,7 @@ done
         echo "SN_NAME_$n=${SN_NAMES[$n]}"
         echo "SN_CIDR_$n=${SN_CIDRS[$n]}"
         echo "SN_TYPE_$n=${SN_TYPES[$n]}"
+        echo "SN_HAS_IGW_$n=${SN_HAS_IGW[$n]}"
         echo "SN_EXTRA_PORTS_$n=${SN_EXTRA_PORTS[$n]}"
         echo "SUBNET_ID_$n=${SUBNET_IDS[$n]}"
         echo "RT_ID_$n=${RT_IDS[$n]}"
@@ -546,7 +568,13 @@ echo ""
 echo -e "  VPC:  ${CYAN}$VPC_ID${NC}"
 [ -n "$IGW_ID" ] && echo -e "  IGW:  ${CYAN}$IGW_ID${NC}"
 for ((n=1; n<=SUBNET_COUNT; n++)); do
-    [ "${SN_TYPES[$n]}" == "public" ] && T="Public" || T="Private"
+    if [ "${SN_TYPES[$n]}" == "public" ]; then
+        T="Public"
+    elif [ "${SN_HAS_IGW[$n]}" == "true" ]; then
+        T="Private+IGW"
+    else
+        T="Private"
+    fi
     echo -e "  [$T] ${SN_NAMES[$n]}: ${CYAN}${SUBNET_IDS[$n]}${NC}  sg: ${SG_IDS[$n]}"
 done
 echo ""
