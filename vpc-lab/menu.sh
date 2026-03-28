@@ -18,41 +18,36 @@ STATUS_CACHE="$SCRIPT_DIR/status.cache"
 
 # ─── Instanz-Status per AWS abfragen und cachen ───────────────────────────────
 refresh_status() {
-    [ -f "$SCRIPT_DIR/01_output.env" ] || { echo -e "${YELLOW}Kein VPC-Setup gefunden.${NC}"; return; }
-    source "$SCRIPT_DIR/01_output.env"
-    source "$SCRIPT_DIR/02_output.env" 2>/dev/null
+    echo -e "${YELLOW}Lade Instanz-Status (alle Instanzen in $REGION)...${NC}"
 
-    if ! grep -q "INSTANCE_ID_" "$SCRIPT_DIR/02_output.env" 2>/dev/null; then
-        echo -e "${YELLOW}Keine Instanzen konfiguriert.${NC}"; return
+    local RAW
+    RAW=$(aws ec2 describe-instances \
+        --filters "Name=instance-state-name,Values=running,stopped,stopping,pending" \
+        --query "Reservations[].Instances[].[InstanceId,State.Name,PublicIpAddress,PrivateIpAddress,Tags[?Key=='Name']|[0].Value]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ -z "$RAW" ]; then
+        echo -e "${YELLOW}Keine Instanzen gefunden.${NC}"; return
     fi
 
-    echo -e "${YELLOW}Lade Instanz-Status...${NC}"
     echo "CACHE_TS=$(date '+%H:%M:%S')" > "$STATUS_CACHE"
-
-    for ((n=1; n<=SUBNET_COUNT; n++)); do
-        IID_VAR="INSTANCE_ID_$n"
-        IID="${!IID_VAR}"
-        [ -z "$IID" ] && continue
-
-        # Eine describe-instances Abfrage – alle drei Felder auf einmal
-        RESULT=$(aws ec2 describe-instances --instance-ids "$IID" \
-            --query "Reservations[0].Instances[0].[State.Name,PublicIpAddress,PrivateIpAddress]" \
-            --output text --region "$REGION" 2>/dev/null)
-
-        STATE=$(echo "$RESULT" | awk '{print $1}')
-        PUB=$(echo "$RESULT"   | awk '{print $2}')
-        PRIV=$(echo "$RESULT"  | awk '{print $3}')
-        [ "$PUB"  == "None" ] && PUB=""
-        [ "$PRIV" == "None" ] && PRIV=""
-
-        echo "CACHE_STATE_$n=$STATE" >> "$STATUS_CACHE"
-        echo "CACHE_PUB_$n=$PUB"    >> "$STATUS_CACHE"
-        echo "CACHE_PRIV_$n=$PRIV"  >> "$STATUS_CACHE"
-
-        SN_NAME_VAR="SN_NAME_$n"
-        echo -e "  ${GREEN}✓${NC} ec2-${!SN_NAME_VAR}  $STATE"
-    done
-    echo -e "${GREEN}✓ Status gespeichert${NC}"
+    local IDX=0
+    while IFS=$'\t' read -r IID STATE PUB PRIV NAME; do
+        [ "$PUB"   == "None" ] && PUB=""
+        [ "$PRIV"  == "None" ] && PRIV=""
+        [ "$NAME"  == "None" ] && NAME="$IID"
+        {
+            echo "CACHE_IID_$IDX=$IID"
+            echo "CACHE_NAME_$IDX=$NAME"
+            echo "CACHE_STATE_$IDX=$STATE"
+            echo "CACHE_PUB_$IDX=$PUB"
+            echo "CACHE_PRIV_$IDX=$PRIV"
+        } >> "$STATUS_CACHE"
+        echo -e "  ${GREEN}✓${NC} $NAME  $STATE"
+        (( IDX++ ))
+    done <<< "$RAW"
+    echo "CACHE_COUNT=$IDX" >> "$STATUS_CACHE"
+    echo -e "${GREEN}✓ $IDX Instanz(en) gespeichert${NC}"
 }
 
 # ─── Status anzeigen – KEINE AWS-Abfragen, nur .env + Cache lesen ────────────
@@ -79,30 +74,19 @@ show_status() {
     fi
 
     # Instanzen – aus Cache, keine API-Abfrage
-    if [ -f "$ENV2" ] && grep -q "INSTANCE_ID_" "$ENV2" 2>/dev/null; then
-        source "$ENV2"
-        echo ""
-        if [ -f "$STATUS_CACHE" ]; then
-            source "$STATUS_CACHE"
-            echo -e "  ${DIM}Instanz-Status (Stand: $CACHE_TS)  –  [r] aktualisieren${NC}"
-            for ((n=1; n<=SUBNET_COUNT; n++)); do
-                IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"; SN_TYPE_VAR="SN_TYPE_$n"
-                IID="${!IID_VAR}"
-                [ -z "$IID" ] && continue
-                STATE_VAR="CACHE_STATE_$n"; PUB_VAR="CACHE_PUB_$n"; PRIV_VAR="CACHE_PRIV_$n"
-                STATE="${!STATE_VAR:-?}"; PUB="${!PUB_VAR}"; PRIV="${!PRIV_VAR}"
-                [ "$STATE" == "running" ] && S="${GREEN}●${NC}" || S="${RED}●${NC}"
-                echo -e "  $S ec2-${!SN_NAME_VAR} [${!SN_TYPE_VAR}]  priv: ${CYAN}${PRIV:--}${NC}  pub: ${CYAN}${PUB:--}${NC}"
-            done
-        else
-            echo -e "  ${DIM}Instanzen vorhanden – [r] fuer Statusabfrage${NC}"
-            for ((n=1; n<=SUBNET_COUNT; n++)); do
-                IID_VAR="INSTANCE_ID_$n"; SN_NAME_VAR="SN_NAME_$n"
-                IID="${!IID_VAR}"
-                [ -z "$IID" ] && continue
-                echo -e "  ${DIM}● ec2-${!SN_NAME_VAR}  ($IID)${NC}"
-            done
-        fi
+    echo ""
+    if [ -f "$STATUS_CACHE" ]; then
+        source "$STATUS_CACHE"
+        echo -e "  ${DIM}Instanz-Status (Stand: $CACHE_TS)  –  [r] aktualisieren${NC}"
+        for ((i=0; i<CACHE_COUNT; i++)); do
+            N_IID="CACHE_IID_$i"; N_NAME="CACHE_NAME_$i"
+            N_STATE="CACHE_STATE_$i"; N_PUB="CACHE_PUB_$i"; N_PRIV="CACHE_PRIV_$i"
+            STATE="${!N_STATE:-?}"
+            [ "$STATE" == "running" ] && S="${GREEN}●${NC}" || S="${RED}●${NC}"
+            echo -e "  $S ${!N_NAME}  priv: ${CYAN}${!N_PRIV:--}${NC}  pub: ${CYAN}${!N_PUB:--}${NC}"
+        done
+    else
+        echo -e "  ${DIM}[r] druecken fuer Instanz-Statusabfrage${NC}"
     fi
 }
 
