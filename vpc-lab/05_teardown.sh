@@ -14,13 +14,86 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_01="$SCRIPT_DIR/01_output.env"
 OUTPUT_02="$SCRIPT_DIR/02_output.env"
 
-if [ ! -f "$OUTPUT_01" ] || ! grep -q "VPC_ID=vpc-" "$OUTPUT_01" 2>/dev/null; then
-    echo -e "${RED}Fehler: Kein aktives Setup gefunden (01_output.env leer).${NC}"
-    exit 1
-fi
-
-source "$OUTPUT_01"
+[ -f "$OUTPUT_01" ] && source "$OUTPUT_01"
 [ -f "$OUTPUT_02" ] && source "$OUTPUT_02"
+[ -z "$REGION" ] && REGION="us-east-1"
+
+# ─── Fallback: VPC aus AWS waehlen wenn .env leer ────────────────────────────
+if ! grep -q "VPC_ID=vpc-" "$OUTPUT_01" 2>/dev/null; then
+    echo -e "${YELLOW}01_output.env leer – VPCs in Region $REGION werden abgefragt...${NC}"
+    echo ""
+
+    VPC_RAW=$(aws ec2 describe-vpcs \
+        --query "Vpcs[].[VpcId,CidrBlock,Tags[?Key=='Name']|[0].Value]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ -z "$VPC_RAW" ]; then
+        echo -e "${RED}Keine VPCs in $REGION gefunden.${NC}"; exit 1
+    fi
+
+    declare -a VPC_IDS VPC_CIDRS VPC_NAMES
+    IDX=0
+    while IFS=$'\t' read -r VID VCIDR VNAME; do
+        [ "$VNAME" == "None" ] && VNAME="-"
+        VPC_IDS[$IDX]="$VID"
+        VPC_CIDRS[$IDX]="$VCIDR"
+        VPC_NAMES[$IDX]="$VNAME"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $VID  $VCIDR  ${DIM}$VNAME${NC}"
+        (( IDX++ ))
+    done <<< "$VPC_RAW"
+
+    echo ""
+    read -rp "VPC fuer Teardown auswaehlen [1-$IDX]: " VPC_SEL
+    if ! [[ "$VPC_SEL" =~ ^[0-9]+$ ]] || [ "$VPC_SEL" -lt 1 ] || [ "$VPC_SEL" -gt "$IDX" ]; then
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; exit 1
+    fi
+    VPC_ID="${VPC_IDS[$((VPC_SEL-1))]}"
+    VPC_CIDR="${VPC_CIDRS[$((VPC_SEL-1))]}"
+
+    # Ressourcen des gewaehlten VPC aus AWS laden
+    SUBNET_COUNT=0
+    while IFS=$'\t' read -r SID SCIDR SNAME; do
+        (( SUBNET_COUNT++ ))
+        eval "SUBNET_ID_$SUBNET_COUNT=$SID"
+        eval "SN_CIDR_$SUBNET_COUNT=$SCIDR"
+        [ "$SNAME" == "None" ] && SNAME="subnet-$SUBNET_COUNT"
+        eval "SN_NAME_$SUBNET_COUNT=$SNAME"
+    done < <(aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "Subnets[].[SubnetId,CidrBlock,Tags[?Key=='Name']|[0].Value]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    while IFS=$'\t' read -r RTID RTNAME; do
+        for ((n=1; n<=SUBNET_COUNT; n++)); do
+            SNAME_VAR="SN_NAME_$n"
+            EXPECTED="rt-${!SNAME_VAR}"
+            if [ "$RTNAME" == "$EXPECTED" ] || [ -z "${RT_ID_LOADED:-}" ]; then
+                eval "RT_ID_$n=$RTID"
+                break
+            fi
+        done
+    done < <(aws ec2 describe-route-tables \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=association.main,Values=false" \
+        --query "RouteTables[].[RouteTableId,Tags[?Key=='Name']|[0].Value]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    for ((n=1; n<=SUBNET_COUNT; n++)); do
+        SNAME_VAR="SN_NAME_$n"
+        SGID=$(aws ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=sec-${!SNAME_VAR}" \
+            --query "SecurityGroups[0].GroupId" \
+            --output text --region "$REGION" 2>/dev/null)
+        [ "$SGID" != "None" ] && eval "SG_ID_$n=$SGID"
+    done
+
+    IGW_ID=$(aws ec2 describe-internet-gateways \
+        --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+        --query "InternetGateways[0].InternetGatewayId" \
+        --output text --region "$REGION" 2>/dev/null)
+    [ "$IGW_ID" == "None" ] && IGW_ID=""
+
+    echo ""
+fi
 
 # ─── Uebersicht aktueller Ressourcen ──────────────────────────────────────────
 clear
