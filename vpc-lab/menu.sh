@@ -202,6 +202,9 @@ while true; do
     echo -e "       ${DIM}→ 11_lab-guide.sh${NC}"
     echo -e "  ${CYAN}[14]${NC} VPC-Diagramm generieren  ${DIM}(HTML/SVG im Browser)${NC}"
     echo -e "       ${DIM}→ 13_diagram.sh${NC}"
+    if [ -f "$SCRIPT_DIR/vpc-diagram.html" ]; then
+        echo -e "       ${GREEN}✓ Diagramm vorhanden:${NC} ${CYAN}file://$SCRIPT_DIR/vpc-diagram.html${NC}"
+    fi
     echo -e "  ${CYAN}[r]${NC}  Status im Menue aktualisieren  ${DIM}(AWS-Abfrage)${NC}"
     echo ""
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
