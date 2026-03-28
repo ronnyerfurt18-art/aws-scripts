@@ -109,13 +109,59 @@ if [ "${CREATE_NEW_KEY:-false}" == "true" ]; then
     echo -e "  PEM gespeichert: ${CYAN}$PEM_FILE${NC}"
 fi
 
+# ─── Betriebssystem wählen ────────────────────────────────────────────────────
+echo ""
+echo -e "${CYAN}Betriebssystem waehlen:${NC}"
+echo -e "  [1] Amazon Linux 2       ${DIM}(yum, ec2-user, Free Tier)${NC}"
+echo -e "  [2] Amazon Linux 2023    ${DIM}(dnf, ec2-user, aktueller)${NC}"
+echo -e "  [3] Ubuntu 22.04 LTS     ${DIM}(apt, ubuntu-user)${NC}"
+echo -e "  [4] Ubuntu 20.04 LTS     ${DIM}(apt, ubuntu-user)${NC}"
+echo ""
+read -rp "Auswahl [1]: " OS_SEL
+
+case "${OS_SEL:-1}" in
+    2)  OS_LABEL="Amazon Linux 2023"
+        AMI_FILTER="al2023-ami-*-x86_64"
+        AMI_OWNER="amazon"
+        SSH_USER="ec2-user"
+        PKG_UPDATE="dnf update -y"
+        PKG_INSTALL="dnf install -y httpd"
+        SVC_START="systemctl start httpd && systemctl enable httpd"
+        ;;
+    3)  OS_LABEL="Ubuntu 22.04 LTS"
+        AMI_FILTER="ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
+        AMI_OWNER="099720109477"
+        SSH_USER="ubuntu"
+        PKG_UPDATE="apt-get update -y"
+        PKG_INSTALL="apt-get install -y apache2"
+        SVC_START="systemctl start apache2 && systemctl enable apache2"
+        ;;
+    4)  OS_LABEL="Ubuntu 20.04 LTS"
+        AMI_FILTER="ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+        AMI_OWNER="099720109477"
+        SSH_USER="ubuntu"
+        PKG_UPDATE="apt-get update -y"
+        PKG_INSTALL="apt-get install -y apache2"
+        SVC_START="systemctl start apache2 && systemctl enable apache2"
+        ;;
+    *)  OS_LABEL="Amazon Linux 2"
+        AMI_FILTER="amzn2-ami-hvm-*-x86_64-gp2"
+        AMI_OWNER="amazon"
+        SSH_USER="ec2-user"
+        PKG_UPDATE="yum update -y"
+        PKG_INSTALL="yum install -y httpd"
+        SVC_START="systemctl start httpd && systemctl enable httpd"
+        ;;
+esac
+echo -e "  ${GREEN}Gewaehlt: $OS_LABEL${NC}  ${DIM}(SSH-User: $SSH_USER)${NC}"
+
 # ─── AMI ermitteln ────────────────────────────────────────────────────────────
 echo ""
-echo -e "${YELLOW}AMI ermitteln (Amazon Linux 2)...${NC}"
+echo -e "${YELLOW}AMI ermitteln ($OS_LABEL)...${NC}"
 AMI_ID=$(aws ec2 describe-images \
-    --owners amazon \
+    --owners "$AMI_OWNER" \
     --filters \
-        "Name=name,Values=amzn2-ami-hvm-*-x86_64-gp2" \
+        "Name=name,Values=$AMI_FILTER" \
         "Name=state,Values=available" \
     --query "sort_by(Images, &CreationDate)[-1].ImageId" \
     --region "$REGION" --output text)
@@ -125,8 +171,8 @@ echo -e "  AMI: ${CYAN}$AMI_ID${NC}"
 echo ""
 echo -e "${BOLD}Info: Wie wird der Inhalt auf die Instanz geladen?${NC}"
 echo -e "  Per ${CYAN}User-Data${NC} – ein Shell-Skript das beim ersten Start automatisch"
-echo -e "  ausgefuehrt wird. Es installiert Apache (httpd) und schreibt"
-echo -e "  den Text in /var/www/html/index.html."
+echo -e "  ausgefuehrt wird. Es installiert Apache und schreibt"
+echo -e "  den Text in den Web-Root."
 echo ""
 
 # ─── Instanzen pro Subnetz starten ────────────────────────────────────────────
@@ -153,10 +199,9 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     RESPONSE_TEXT="${RESPONSE_TEXT:-$DEFAULT_TEXT}"
 
     USER_DATA="#!/bin/bash
-yum update -y
-yum install -y httpd
-systemctl start httpd
-systemctl enable httpd
+$PKG_UPDATE
+$PKG_INSTALL
+$SVC_START
 echo '<h1>$RESPONSE_TEXT</h1>' > /var/www/html/index.html"
 
     echo ""
@@ -189,6 +234,8 @@ done
     echo "REGION=$REGION"
     echo "SUBNET_COUNT=$SUBNET_COUNT"
     echo "KEY_NAME=$KEY_NAME"
+    echo "SSH_USER=$SSH_USER"
+    echo "OS_LABEL=$OS_LABEL"
     for ((n=1; n<=SUBNET_COUNT; n++)); do
         SN_NAME_VAR="SN_NAME_$n"
         SN_TYPE_VAR="SN_TYPE_$n"
@@ -276,17 +323,17 @@ if [ -n "$PUBLIC_INSTANCE_ID" ] && [ -f "$PEM_PATH" ]; then
         # ─── Verbindungsbefehle ausgeben ──────────────────────────────────────
         echo ""
         echo -e "${BOLD}─── Verbindungsbefehle ──────────────────────────────${NC}"
-        echo -e "  SSH direkt:"
-        echo -e "  ${CYAN}ssh -i $PEM_PATH ec2-user@${PUB_IP}${NC}"
+        echo -e "  SSH direkt:  ${DIM}(OS: $OS_LABEL → User: $SSH_USER)${NC}"
+        echo -e "  ${CYAN}ssh -i $PEM_PATH ${SSH_USER}@${PUB_IP}${NC}"
         if [ -n "$PRIV_IP_TARGET" ]; then
             echo ""
             echo -e "  SSH-Tunnel HTTP-Test (Private Port 80 → lokal 4747):"
-            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:80 ec2-user@${PUB_IP} -N &${NC}"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:80 ${SSH_USER}@${PUB_IP} -N &${NC}"
             echo -e "  ${CYAN}curl http://localhost:4747${NC}  ${DIM}→ erwartet: hello private${NC}"
             echo ""
             echo -e "  SSH-Tunnel direkt auf Private:"
-            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:22 ec2-user@${PUB_IP} -N &${NC}"
-            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -p 4747 ec2-user@localhost${NC}"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -L 4747:${PRIV_IP_TARGET}:22 ${SSH_USER}@${PUB_IP} -N &${NC}"
+            echo -e "  ${CYAN}ssh -i ${KEY_NAME}.pem -p 4747 ${SSH_USER}@localhost${NC}"
         fi
     fi
 else
