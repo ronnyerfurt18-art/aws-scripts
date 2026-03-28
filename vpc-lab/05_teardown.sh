@@ -64,10 +64,10 @@ if ! grep -q "VPC_ID=vpc-" "$OUTPUT_01" 2>/dev/null; then
         --output text --region "$REGION" 2>/dev/null)
 
     while IFS=$'\t' read -r RTID RTNAME; do
+        [ "$RTNAME" == "None" ] && RTNAME=""
         for ((n=1; n<=SUBNET_COUNT; n++)); do
             SNAME_VAR="SN_NAME_$n"
-            EXPECTED="rt-${!SNAME_VAR}"
-            if [ "$RTNAME" == "$EXPECTED" ] || [ -z "${RT_ID_LOADED:-}" ]; then
+            if [ "$RTNAME" == "rt-${!SNAME_VAR}" ]; then
                 eval "RT_ID_$n=$RTID"
                 break
             fi
@@ -91,6 +91,17 @@ if ! grep -q "VPC_ID=vpc-" "$OUTPUT_01" 2>/dev/null; then
         --query "InternetGateways[0].InternetGatewayId" \
         --output text --region "$REGION" 2>/dev/null)
     [ "$IGW_ID" == "None" ] && IGW_ID=""
+
+    # EC2-Instanzen im VPC laden (pro Subnetz)
+    for ((n=1; n<=SUBNET_COUNT; n++)); do
+        SID_VAR="SUBNET_ID_$n"
+        IID=$(aws ec2 describe-instances \
+            --filters "Name=subnet-id,Values=${!SID_VAR}" \
+                      "Name=instance-state-name,Values=running,stopped,pending,stopping" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text --region "$REGION" 2>/dev/null)
+        [ "$IID" != "None" ] && [ -n "$IID" ] && eval "INSTANCE_ID_$n=$IID"
+    done
 
     echo ""
 fi
