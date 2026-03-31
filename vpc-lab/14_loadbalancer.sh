@@ -126,7 +126,8 @@ select_lb_sg() {
         echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
         (( IDX++ ))
     done <<< "$SG_RAW"
-    echo -e "  ${CYAN}[$((IDX+1))]${NC}  Neue SG fuer LB erstellen  ${DIM}(Port 80+443 von ueberall)${NC}"
+    local NEW_SG_PORTS="${LISTENER_PORT:-80}"
+    echo -e "  ${CYAN}[$((IDX+1))]${NC}  Neue SG fuer LB erstellen  ${DIM}(Port $NEW_SG_PORTS von ueberall)${NC}"
 
     echo ""
     read -rp "  Auswahl: " SG_SEL
@@ -134,16 +135,13 @@ select_lb_sg() {
     if [ "$SG_SEL" == "$((IDX+1))" ]; then
         LB_SG_ID=$(aws ec2 create-security-group \
             --group-name "sg-lb-$(date +%s)" \
-            --description "Load Balancer SG HTTP HTTPS" \
+            --description "Load Balancer SG port $NEW_SG_PORTS" \
             --vpc-id "$VPC_ID" --region "$REGION" \
             --query "GroupId" --output text 2>/dev/null)
         aws ec2 authorize-security-group-ingress \
-            --group-id "$LB_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 \
+            --group-id "$LB_SG_ID" --protocol tcp --port "$NEW_SG_PORTS" --cidr 0.0.0.0/0 \
             --region "$REGION" > /dev/null
-        aws ec2 authorize-security-group-ingress \
-            --group-id "$LB_SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0 \
-            --region "$REGION" > /dev/null
-        echo -e "  ${GREEN}✓ Neue SG erstellt:${NC} $LB_SG_ID"
+        echo -e "  ${GREEN}✓ Neue SG erstellt:${NC} $LB_SG_ID  ${DIM}(Port $NEW_SG_PORTS offen)${NC}"
     elif [[ "$SG_SEL" =~ ^[0-9]+$ ]] && [ "$SG_SEL" -ge 1 ] && [ "$SG_SEL" -le "$IDX" ]; then
         LB_SG_ID="${SG_IDS_SEL[$((SG_SEL-1))]}"
         echo -e "  ${GREEN}✓ Gewaehlt:${NC} $LB_SG_ID"
@@ -158,7 +156,6 @@ create_lb() {
     echo ""
     select_vpc || return
     select_lb_subnets || return
-    select_lb_sg || return
 
     echo ""
     read -rp "  Load Balancer Name [alb-lab]: " LB_NAME
@@ -174,8 +171,17 @@ create_lb() {
     echo ""
     read -rp "  Target Group Name [tg-lab]: " TG_NAME
     TG_NAME="${TG_NAME:-tg-lab}"
-    read -rp "  Target Port [80]: " TG_PORT
+    echo ""
+    echo -e "  ${BOLD}Port-Konfiguration:${NC}"
+    echo -e "  ${DIM}Eingehender Port = was der LB von aussen empfaengt (Listener)${NC}"
+    echo -e "  ${DIM}Ziel-Port        = Port auf der EC2-Instanz (Target Group)${NC}"
+    echo ""
+    read -rp "  Eingehender Port (Listener) [80]: " LISTENER_PORT
+    LISTENER_PORT="${LISTENER_PORT:-80}"
+    read -rp "  Ziel-Port auf der Instanz   [80]: " TG_PORT
     TG_PORT="${TG_PORT:-80}"
+
+    select_lb_sg || return
 
     # Target Group erstellen
     echo ""
@@ -262,16 +268,16 @@ create_lb() {
 
     # Listener erstellen
     echo ""
-    echo -e "${YELLOW}[3/3] Listener HTTP:80 erstellen...${NC}"
+    echo -e "${YELLOW}[3/3] Listener HTTP:${LISTENER_PORT} erstellen...${NC}"
     LISTENER_ARN=$(aws elbv2 create-listener \
         --load-balancer-arn "$LB_ARN" \
-        --protocol HTTP --port 80 \
+        --protocol HTTP --port "$LISTENER_PORT" \
         --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
         --region "$REGION" \
         --query "Listeners[0].ListenerArn" --output text 2>&1)
 
     if [[ "$LISTENER_ARN" == arn:* ]]; then
-        echo -e "  ${GREEN}✓ Listener HTTP:80 → $TG_NAME${NC}"
+        echo -e "  ${GREEN}✓ Listener HTTP:${LISTENER_PORT} → $TG_NAME (Port $TG_PORT)${NC}"
     else
         echo -e "  ${RED}Fehler Listener: $LISTENER_ARN${NC}"
     fi
@@ -279,12 +285,13 @@ create_lb() {
     echo ""
     echo -e "${BOLD}=== Load Balancer erstellt ===${NC}"
     echo ""
-    echo -e "  Name:   ${CYAN}$LB_NAME${NC}"
-    echo -e "  DNS:    ${CYAN}$LB_DNS${NC}"
-    echo -e "  Schema: ${CYAN}$LB_SCHEME${NC}"
-    echo -e "  TG:     ${CYAN}$TG_NAME  Port $TG_PORT${NC}"
+    echo -e "  Name:        ${CYAN}$LB_NAME${NC}"
+    echo -e "  DNS:         ${CYAN}$LB_DNS${NC}"
+    echo -e "  Schema:      ${CYAN}$LB_SCHEME${NC}"
+    echo -e "  Eingehend:   ${CYAN}Port $LISTENER_PORT${NC}  ${DIM}(Listener)${NC}"
+    echo -e "  Ziel:        ${CYAN}$TG_NAME  Port $TG_PORT${NC}  ${DIM}(Target Group)${NC}"
     echo ""
-    echo -e "  Testen: ${CYAN}curl http://$LB_DNS${NC}"
+    echo -e "  Testen: ${CYAN}curl http://$LB_DNS:${LISTENER_PORT}${NC}"
     echo -e "  ${DIM}(kann 1-2 Minuten dauern bis der LB aktiv ist)${NC}"
 }
 
