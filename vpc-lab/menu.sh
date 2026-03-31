@@ -48,6 +48,26 @@ refresh_status() {
     done <<< "$RAW"
     echo "CACHE_COUNT=$IDX" >> "$STATUS_CACHE"
     echo -e "${GREEN}✓ $IDX Instanz(en) gespeichert${NC}"
+
+    # Load Balancer cachen
+    echo -e "${YELLOW}Lade Load Balancer...${NC}"
+    local LB_RAW
+    LB_RAW=$(aws elbv2 describe-load-balancers \
+        --query "LoadBalancers[].[LoadBalancerName,State.Code,DNSName]" \
+        --output text --region "$REGION" 2>/dev/null)
+    local LBIDX=0
+    if [ -n "$LB_RAW" ]; then
+        while IFS=$'\t' read -r LBNAME LBSTATE LBDNS; do
+            {
+                echo "CACHE_LB_NAME_$LBIDX=$LBNAME"
+                echo "CACHE_LB_STATE_$LBIDX=$LBSTATE"
+                echo "CACHE_LB_DNS_$LBIDX=$LBDNS"
+            } >> "$STATUS_CACHE"
+            echo -e "  ${GREEN}✓${NC} LB: $LBNAME  ($LBSTATE)"
+            (( LBIDX++ ))
+        done <<< "$LB_RAW"
+    fi
+    echo "CACHE_LB_COUNT=$LBIDX" >> "$STATUS_CACHE"
 }
 
 # ─── Status anzeigen – KEINE AWS-Abfragen, nur .env + Cache lesen ────────────
@@ -87,6 +107,20 @@ show_status() {
         done
     else
         echo -e "  ${DIM}[r] druecken fuer Instanz-Statusabfrage${NC}"
+    fi
+
+    # Load Balancer – aus Cache
+    if [ -f "$STATUS_CACHE" ] && grep -q "CACHE_LB_COUNT" "$STATUS_CACHE"; then
+        source "$STATUS_CACHE"
+        if [ "${CACHE_LB_COUNT:-0}" -gt 0 ]; then
+            echo ""
+            echo -e "  ${DIM}Load Balancer:${NC}"
+            for ((i=0; i<CACHE_LB_COUNT; i++)); do
+                N_NAME="CACHE_LB_NAME_$i"; N_STATE="CACHE_LB_STATE_$i"; N_DNS="CACHE_LB_DNS_$i"
+                [ "${!N_STATE}" == "active" ] && S="${GREEN}●${NC}" || S="${YELLOW}●${NC}"
+                echo -e "  $S ${!N_NAME}  ${DIM}${!N_DNS}${NC}"
+            done
+        fi
     fi
 }
 
