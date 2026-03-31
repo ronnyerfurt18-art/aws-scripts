@@ -183,7 +183,9 @@ cat >> "$OUT_FILE" <<SVGEOF
         stroke="#00d4ff" stroke-width="2" marker-end="url(#arrow)"/>
 
 </svg>
+SVGEOF
 
+cat >> "$OUT_FILE" <<HTMLEOF
 <div class="info">
   <b>VPC:</b> <span>$VPC_ID</span> &nbsp;|&nbsp; <b>CIDR:</b> <span>$VPC_CIDR</span> &nbsp;|&nbsp;
   <b>Region:</b> <span>$REGION</span> &nbsp;|&nbsp; <b>IGW:</b> <span>$IGW_ID</span><br>
