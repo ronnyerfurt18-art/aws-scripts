@@ -387,9 +387,17 @@ if has_step 9; then
                 1) echo -e "  ${DIM}  LB: $LB_NAME  [bereits geloescht]${NC}" ;;
                 2) echo -e "  ${RED}  Fehler LB: $RESULT${NC}" ;;
             esac
-            # Target Groups loeschen (kurz warten bis LB weg)
+            # Warten bis LB wirklich geloescht ist (asynchron, kann 30-60s dauern)
             if [ -n "$TG_ARNS" ]; then
-                sleep 5
+                echo -e "  ${DIM}Warte auf vollstaendige LB-Loeschung...${NC}"
+                for i in $(seq 1 24); do
+                    STILL_EXISTS=$(aws elbv2 describe-load-balancers \
+                        --load-balancer-arns "$LB_ARN" \
+                        --query "LoadBalancers[0].State.Code" \
+                        --output text --region "$REGION" 2>/dev/null)
+                    [ -z "$STILL_EXISTS" ] || [ "$STILL_EXISTS" == "None" ] && break
+                    sleep 5
+                done
                 for TGARN in $TG_ARNS; do
                     TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$TGARN" \
                         --query "TargetGroups[0].TargetGroupName" --output text --region "$REGION" 2>/dev/null)
