@@ -126,8 +126,14 @@ select_lb_sg() {
         echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
         (( IDX++ ))
     done <<< "$SG_RAW"
-    local NEW_SG_PORTS="${LISTENER_PORT:-80}"
-    echo -e "  ${CYAN}[$((IDX+1))]${NC}  Neue SG fuer LB erstellen  ${DIM}(Port $NEW_SG_PORTS von ueberall)${NC}"
+    # LISTENER_PORTS gesetzt wenn aus create_lb aufgerufen, sonst Fallback auf LISTENER_PORT
+    local _SG_PORTS_LABEL
+    if [ ${#LISTENER_PORTS[@]} -gt 0 ]; then
+        _SG_PORTS_LABEL="${LISTENER_PORTS[*]}"
+    else
+        _SG_PORTS_LABEL="${LISTENER_PORT:-80}"
+    fi
+    echo -e "  ${CYAN}[$((IDX+1))]${NC}  Neue SG fuer LB erstellen  ${DIM}(Port(s) $_SG_PORTS_LABEL von ueberall)${NC}"
 
     echo ""
     read -rp "  Auswahl: " SG_SEL
@@ -135,13 +141,21 @@ select_lb_sg() {
     if [ "$SG_SEL" == "$((IDX+1))" ]; then
         LB_SG_ID=$(aws ec2 create-security-group \
             --group-name "sg-lb-$(date +%s)" \
-            --description "Load Balancer SG port $NEW_SG_PORTS" \
+            --description "Load Balancer SG ports $_SG_PORTS_LABEL" \
             --vpc-id "$VPC_ID" --region "$REGION" \
             --query "GroupId" --output text 2>/dev/null)
-        aws ec2 authorize-security-group-ingress \
-            --group-id "$LB_SG_ID" --protocol tcp --port "$NEW_SG_PORTS" --cidr 0.0.0.0/0 \
-            --region "$REGION" > /dev/null
-        echo -e "  ${GREEN}✓ Neue SG erstellt:${NC} $LB_SG_ID  ${DIM}(Port $NEW_SG_PORTS offen)${NC}"
+        if [ ${#LISTENER_PORTS[@]} -gt 0 ]; then
+            for _SP in "${LISTENER_PORTS[@]}"; do
+                aws ec2 authorize-security-group-ingress \
+                    --group-id "$LB_SG_ID" --protocol tcp --port "$_SP" --cidr 0.0.0.0/0 \
+                    --region "$REGION" > /dev/null
+            done
+        else
+            aws ec2 authorize-security-group-ingress \
+                --group-id "$LB_SG_ID" --protocol tcp --port "${LISTENER_PORT:-80}" --cidr 0.0.0.0/0 \
+                --region "$REGION" > /dev/null
+        fi
+        echo -e "  ${GREEN}✓ Neue SG erstellt:${NC} $LB_SG_ID  ${DIM}(Port(s) $_SG_PORTS_LABEL offen)${NC}"
     elif [[ "$SG_SEL" =~ ^[0-9]+$ ]] && [ "$SG_SEL" -ge 1 ] && [ "$SG_SEL" -le "$IDX" ]; then
         LB_SG_ID="${SG_IDS_SEL[$((SG_SEL-1))]}"
         echo -e "  ${GREEN}✓ Gewaehlt:${NC} $LB_SG_ID"
@@ -173,13 +187,29 @@ create_lb() {
     TG_NAME="${TG_NAME:-tg-lab}"
     echo ""
     echo -e "  ${BOLD}Port-Konfiguration:${NC}"
-    echo -e "  ${DIM}Eingehender Port = was der LB von aussen empfaengt (Listener)${NC}"
+    echo -e "  ${DIM}Eingehende Ports = was der LB von aussen empfaengt (je ein Listener pro Port)${NC}"
     echo -e "  ${DIM}Ziel-Port        = Port auf der EC2-Instanz (Target Group)${NC}"
     echo ""
-    read -rp "  Eingehender Port (Listener) [80]: " LISTENER_PORT
-    LISTENER_PORT="${LISTENER_PORT:-80}"
-    read -rp "  Ziel-Port auf der Instanz   [80]: " TG_PORT
+    read -rp "  Eingehende Ports (kommagetrennt) [80]: " LISTENER_PORTS_INPUT
+    LISTENER_PORTS_INPUT="${LISTENER_PORTS_INPUT:-80}"
+    read -rp "  Ziel-Port auf der Instanz        [80]: " TG_PORT
     TG_PORT="${TG_PORT:-80}"
+
+    # Ports parsen und validieren
+    declare -a LISTENER_PORTS
+    IFS=',' read -ra _LP_PARTS <<< "$LISTENER_PORTS_INPUT"
+    for _P in "${_LP_PARTS[@]}"; do
+        _P=$(echo "$_P" | tr -d ' \r')
+        if [[ "$_P" =~ ^[0-9]+$ ]] && [ "$_P" -ge 1 ] && [ "$_P" -le 65535 ]; then
+            LISTENER_PORTS[${#LISTENER_PORTS[@]}]="$_P"
+        else
+            echo -e "  ${YELLOW}Port '$_P' uebersprungen (ungueltig)${NC}"
+        fi
+    done
+    [ ${#LISTENER_PORTS[@]} -eq 0 ] && LISTENER_PORTS=(80)
+    LISTENER_PORT="${LISTENER_PORTS[0]}"   # fuer SG-Erstellung (erster Port)
+
+    echo -e "  ${GREEN}✓ Listener-Ports:${NC} ${LISTENER_PORTS[*]}"
 
     select_lb_sg || return
 
@@ -266,21 +296,22 @@ create_lb() {
         --query "LoadBalancers[0].DNSName" --output text --region "$REGION" 2>/dev/null)
     echo -e "  ${GREEN}✓ $LB_NAME${NC}: $LB_DNS"
 
-    # Listener erstellen
+    # Listener erstellen (je einen pro Port)
     echo ""
-    echo -e "${YELLOW}[3/3] Listener HTTP:${LISTENER_PORT} erstellen...${NC}"
-    LISTENER_ARN=$(aws elbv2 create-listener \
-        --load-balancer-arn "$LB_ARN" \
-        --protocol HTTP --port "$LISTENER_PORT" \
-        --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
-        --region "$REGION" \
-        --query "Listeners[0].ListenerArn" --output text 2>&1)
-
-    if [[ "$LISTENER_ARN" == arn:* ]]; then
-        echo -e "  ${GREEN}✓ Listener HTTP:${LISTENER_PORT} → $TG_NAME (Port $TG_PORT)${NC}"
-    else
-        echo -e "  ${RED}Fehler Listener: $LISTENER_ARN${NC}"
-    fi
+    echo -e "${YELLOW}[3/3] Listener erstellen (${#LISTENER_PORTS[@]} Port(s))...${NC}"
+    for LP in "${LISTENER_PORTS[@]}"; do
+        L_ARN=$(aws elbv2 create-listener \
+            --load-balancer-arn "$LB_ARN" \
+            --protocol HTTP --port "$LP" \
+            --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
+            --region "$REGION" \
+            --query "Listeners[0].ListenerArn" --output text 2>&1)
+        if [[ "$L_ARN" == arn:* ]]; then
+            echo -e "  ${GREEN}✓ Listener HTTP:${LP} → $TG_NAME (Port $TG_PORT)${NC}"
+        else
+            echo -e "  ${RED}Fehler Port $LP: $L_ARN${NC}"
+        fi
+    done
 
     echo ""
     echo -e "${BOLD}=== Load Balancer erstellt ===${NC}"
@@ -288,10 +319,12 @@ create_lb() {
     echo -e "  Name:        ${CYAN}$LB_NAME${NC}"
     echo -e "  DNS:         ${CYAN}$LB_DNS${NC}"
     echo -e "  Schema:      ${CYAN}$LB_SCHEME${NC}"
-    echo -e "  Eingehend:   ${CYAN}Port $LISTENER_PORT${NC}  ${DIM}(Listener)${NC}"
+    echo -e "  Eingehend:   ${CYAN}Port(s): ${LISTENER_PORTS[*]}${NC}  ${DIM}(Listener)${NC}"
     echo -e "  Ziel:        ${CYAN}$TG_NAME  Port $TG_PORT${NC}  ${DIM}(Target Group)${NC}"
     echo ""
-    echo -e "  Testen: ${CYAN}curl http://$LB_DNS:${LISTENER_PORT}${NC}"
+    for LP in "${LISTENER_PORTS[@]}"; do
+        echo -e "  Testen: ${CYAN}curl http://$LB_DNS:${LP}${NC}"
+    done
     echo -e "  ${DIM}(kann 1-2 Minuten dauern bis der LB aktiv ist)${NC}"
 }
 
