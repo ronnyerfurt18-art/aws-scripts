@@ -235,7 +235,7 @@ done
     echo "SUBNET_COUNT=$SUBNET_COUNT"
     echo "KEY_NAME=$KEY_NAME"
     echo "SSH_USER=$SSH_USER"
-    echo "OS_LABEL=$OS_LABEL"
+    echo "OS_LABEL=\"$OS_LABEL\""
     for ((n=1; n<=SUBNET_COUNT; n++)); do
         SN_NAME_VAR="SN_NAME_$n"
         SN_TYPE_VAR="SN_TYPE_$n"
