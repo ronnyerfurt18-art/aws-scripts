@@ -22,28 +22,47 @@ source "$SCRIPT_DIR/01_output.env"
 
 echo -e "${YELLOW}Generiere VPC-Diagramm...${NC}"
 
+# ─── Load Balancer abfragen ───────────────────────────────────────────────────
+LB_RAW=$(aws elbv2 describe-load-balancers \
+    --query "LoadBalancers[].[LoadBalancerName,State.Code,Scheme]" \
+    --output text --region "$REGION" 2>/dev/null | head -1)
+LB_NAME=$(echo "$LB_RAW" | cut -f1)
+LB_STATE=$(echo "$LB_RAW" | cut -f2)
+LB_SCHEME=$(echo "$LB_RAW" | cut -f3)
+
 # ─── Subnetze und Instanzen sammeln ──────────────────────────────────────────
 declare -a SN_BLOCKS
 for ((n=1; n<=SUBNET_COUNT; n++)); do
-    NAME_VAR="SN_NAME_$n";   CIDR_VAR="SN_CIDR_$n";   TYPE_VAR="SN_TYPE_$n"
+    NAME_VAR="SN_NAME_$n"; CIDR_VAR="SN_CIDR_$n"; TYPE_VAR="SN_TYPE_$n"
     IID_VAR="INSTANCE_ID_$n"
     SN_BLOCKS[$n]="${!NAME_VAR}|${!CIDR_VAR}|${!TYPE_VAR}|${!IID_VAR}"
 done
 
 # ─── Layout berechnen ─────────────────────────────────────────────────────────
-CANVAS_W=900
 SN_W=220
-SN_H=320
+SN_H=340
 SN_START_X=80
-SN_Y=120
 SN_GAP=60
 VPC_PAD=40
 
+# Platz oben für LB falls vorhanden
+TOP_OFFSET=0
+[ -n "$LB_NAME" ] && TOP_OFFSET=90
+
 TOTAL_SN_W=$(( SUBNET_COUNT * SN_W + (SUBNET_COUNT - 1) * SN_GAP ))
 VPC_W=$(( TOTAL_SN_W + 2 * VPC_PAD + SN_START_X - 20 ))
-VPC_H=500
+VPC_H=520
+VPC_Y=$(( 20 + TOP_OFFSET ))
+SN_Y=$(( VPC_Y + 100 ))
 IGW_X=$(( VPC_W / 2 - 60 ))
-IGW_Y=480
+IGW_Y=$(( VPC_Y + VPC_H - 44 ))
+SVG_W=$(( VPC_W + 120 ))
+SVG_H=$(( VPC_Y + VPC_H + 60 ))
+
+LB_X=$(( VPC_W / 2 - 60 ))
+LB_Y=12
+LB_W=120
+LB_H=44
 
 # ─── HTML generieren ─────────────────────────────────────────────────────────
 cat > "$OUT_FILE" <<HTMLEOF
@@ -62,7 +81,7 @@ cat > "$OUT_FILE" <<HTMLEOF
 </head>
 <body>
 <h2>VPC-Diagramm</h2>
-<svg width="$(( VPC_W + 100 ))" height="$(( VPC_H + 80 ))" xmlns="http://www.w3.org/2000/svg">
+<svg width="$SVG_W" height="$SVG_H" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#00d4ff"/>
@@ -73,18 +92,42 @@ cat > "$OUT_FILE" <<HTMLEOF
   </defs>
 
   <!-- VPC -->
-  <rect x="20" y="20" width="$VPC_W" height="$VPC_H" rx="16"
+  <rect x="20" y="$VPC_Y" width="$VPC_W" height="$VPC_H" rx="16"
         fill="none" stroke="#0f3460" stroke-width="3"/>
-  <text x="36" y="46" font-size="15" fill="#aaa" font-family="monospace">VPC</text>
-  <text x="70" y="46" font-size="15" fill="#ff6b35" font-weight="bold" font-family="monospace">$VPC_CIDR</text>
-  <text x="36" y="64" font-size="11" fill="#555" font-family="monospace">$VPC_ID</text>
+  <text x="36" y="$(( VPC_Y + 26 ))" font-size="15" fill="#aaa" font-family="monospace">VPC</text>
+  <text x="70" y="$(( VPC_Y + 26 ))" font-size="15" fill="#ff6b35" font-weight="bold" font-family="monospace">$VPC_CIDR</text>
+  <text x="36" y="$(( VPC_Y + 44 ))" font-size="11" fill="#555" font-family="monospace">$VPC_ID</text>
 
   <!-- AZ -->
-  <rect x="40" y="80" width="$(( VPC_W - 40 ))" height="$(( VPC_H - 120 ))" rx="10"
+  <rect x="40" y="$(( VPC_Y + 60 ))" width="$(( VPC_W - 40 ))" height="$(( VPC_H - 120 ))" rx="10"
         fill="none" stroke="#ff6b35" stroke-width="2" stroke-dasharray="10,5"/>
-  <text x="56" y="100" font-size="12" fill="#ff6b35" font-family="monospace">AZ: ${REGION}a</text>
+  <text x="56" y="$(( VPC_Y + 80 ))" font-size="12" fill="#ff6b35" font-family="monospace">AZ: ${REGION}a / ${REGION}b</text>
 
 HTMLEOF
+
+# ─── Load Balancer zeichnen (falls vorhanden) ──────────────────────────────────
+if [ -n "$LB_NAME" ]; then
+    [ "$LB_STATE" == "active" ] && LB_COLOR="#00d4ff" || LB_COLOR="#888"
+    cat >> "$OUT_FILE" <<SVGEOF
+
+  <!-- Load Balancer -->
+  <rect x="$LB_X" y="$LB_Y" width="$LB_W" height="$LB_H" rx="8"
+        fill="#0d2a1a" stroke="$LB_COLOR" stroke-width="2.5"/>
+  <text x="$(( LB_X + LB_W/2 ))" y="$(( LB_Y + 16 ))" font-size="11" fill="$LB_COLOR" text-anchor="middle" font-weight="bold" font-family="monospace">ALB</text>
+  <text x="$(( LB_X + LB_W/2 ))" y="$(( LB_Y + 30 ))" font-size="9" fill="#aaa" text-anchor="middle" font-family="monospace">$LB_NAME</text>
+  <text x="$(( LB_X + LB_W/2 ))" y="$(( LB_Y + 42 ))" font-size="8" fill="#555" text-anchor="middle" font-family="monospace">$LB_SCHEME</text>
+
+  <!-- Internet → ALB -->
+  <text x="$(( SVG_W - 50 ))" y="$(( LB_Y + 22 ))" font-size="12" fill="#888" text-anchor="middle" font-family="monospace">Internet</text>
+  <line x1="$(( LB_X + LB_W ))" y1="$(( LB_Y + LB_H/2 ))" x2="$(( SVG_W - 80 ))" y2="$(( LB_Y + LB_H/2 ))"
+        stroke="#00d4ff" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ALB → IGW (Pfeil nach unten) -->
+  <line x1="$(( LB_X + LB_W/2 ))" y1="$(( LB_Y + LB_H ))" x2="$(( IGW_X + 60 ))" y2="$IGW_Y"
+        stroke="$LB_COLOR" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
+
+SVGEOF
+fi
 
 # ─── Subnetze zeichnen ────────────────────────────────────────────────────────
 for ((n=1; n<=SUBNET_COUNT; n++)); do
@@ -92,14 +135,16 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     X=$(( SN_START_X + (n-1) * (SN_W + SN_GAP) + 20 ))
     Y=$SN_Y
 
-    # Farben je Typ
     case "$SN_TYPE" in
         public)  BORDER="#00d4ff"; LABEL_COLOR="#00d4ff"; TYPE_LABEL="Public" ;;
         private) BORDER="#ff4757"; LABEL_COLOR="#ff4757"; TYPE_LABEL="Private" ;;
         *)       BORDER="#888";    LABEL_COLOR="#888";    TYPE_LABEL="Isoliert" ;;
     esac
 
-    # Subnetz-Box
+    # SG-Name ermitteln
+    SG_NAME_VAR="SN_SG_NAME_$n"
+    SG_NAME="${!SG_NAME_VAR:-sec-$SN_NAME}"
+
     cat >> "$OUT_FILE" <<SVGEOF
 
   <!-- Subnetz $n: $SN_NAME -->
@@ -108,33 +153,30 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
   <text x="$(( X + 10 ))" y="$(( Y + 22 ))" font-size="13" fill="$LABEL_COLOR" font-weight="bold" font-family="monospace">$SN_NAME</text>
   <text x="$(( X + 10 ))" y="$(( Y + 38 ))" font-size="10" fill="#888" font-family="monospace">$SN_CIDR  [$TYPE_LABEL]</text>
 
+  <!-- Security Group Rahmen um EC2 -->
+  <rect x="$(( X + 14 ))" y="$(( Y + 46 ))" width="$(( SN_W - 28 ))" height="68" rx="5"
+        fill="none" stroke="#9b59b6" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="$(( X + 18 ))" y="$(( Y + 42 ))" font-size="9" fill="#9b59b6" font-family="monospace">SG: $SG_NAME</text>
+
   <!-- EC2 -->
-  <rect x="$(( X + 20 ))" y="$(( Y + 52 ))" width="$(( SN_W - 40 ))" height="48" rx="6"
+  <rect x="$(( X + 22 ))" y="$(( Y + 54 ))" width="$(( SN_W - 44 ))" height="44" rx="5"
         fill="#1a3a5c" stroke="$BORDER" stroke-width="1.5"/>
   <text x="$(( X + SN_W/2 ))" y="$(( Y + 72 ))" font-size="11" fill="#fff" text-anchor="middle" font-family="monospace">EC2</text>
-  <text x="$(( X + SN_W/2 ))" y="$(( Y + 88 ))" font-size="10" fill="#aaa" text-anchor="middle" font-family="monospace">ec2-$SN_NAME</text>
-
-  <!-- SG -->
-  <rect x="$(( X + SN_W - 55 ))" y="$(( Y + 52 ))" width="40" height="20" rx="4"
-        fill="#2d1b4e" stroke="#9b59b6" stroke-width="1"/>
-  <text x="$(( X + SN_W - 35 ))" y="$(( Y + 66 ))" font-size="9" fill="#9b59b6" text-anchor="middle" font-family="monospace">SG</text>
+  <text x="$(( X + SN_W/2 ))" y="$(( Y + 87 ))" font-size="10" fill="#aaa" text-anchor="middle" font-family="monospace">ec2-$SN_NAME</text>
 
   <!-- RT -->
-  <circle cx="$(( X + 30 ))" cy="$(( Y + 200 ))" r="28" fill="#0d1b2a" stroke="#00d4ff" stroke-width="2"/>
-  <text x="$(( X + 30 ))" y="$(( Y + 205 ))" font-size="13" fill="#00d4ff" text-anchor="middle" font-weight="bold" font-family="monospace">RT</text>
+  <circle cx="$(( X + 36 ))" cy="$(( Y + 210 ))" r="28" fill="#0d1b2a" stroke="#00d4ff" stroke-width="2"/>
+  <text x="$(( X + 36 ))" y="$(( Y + 215 ))" font-size="13" fill="#00d4ff" text-anchor="middle" font-weight="bold" font-family="monospace">RT</text>
+  <text x="$(( X + 10 ))" y="$(( Y + 250 ))" font-size="9" fill="#00d4ff" font-family="monospace">rt-$SN_NAME</text>
 
   <!-- ACL -->
-  <rect x="$(( X + SN_W - 60 ))" y="$(( Y + 140 ))" width="48" height="30" rx="4"
+  <rect x="$(( X + SN_W - 62 ))" y="$(( Y + 155 ))" width="50" height="30" rx="4"
         fill="#0d1b2a" stroke="#2ecc71" stroke-width="1.5"/>
-  <text x="$(( X + SN_W - 36 ))" y="$(( Y + 160 ))" font-size="10" fill="#2ecc71" text-anchor="middle" font-family="monospace">ACL</text>
+  <text x="$(( X + SN_W - 37 ))" y="$(( Y + 175 ))" font-size="10" fill="#2ecc71" text-anchor="middle" font-family="monospace">ACL</text>
 
   <!-- Verbindung EC2 → RT -->
-  <line x1="$(( X + SN_W/2 ))" y1="$(( Y + 100 ))" x2="$(( X + 30 ))" y2="$(( Y + 172 ))"
+  <line x1="$(( X + SN_W/2 ))" y1="$(( Y + 98 ))" x2="$(( X + 36 ))" y2="$(( Y + 182 ))"
         stroke="#00d4ff" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- SG Label -->
-  <text x="$(( X + 10 ))" y="$(( Y + 310 ))" font-size="10" fill="#9b59b6" font-family="monospace">sec-$SN_NAME</text>
-  <text x="$(( X + 10 ))" y="$(( Y + 325 ))" font-size="10" fill="#00d4ff" font-family="monospace">rt-$SN_NAME</text>
 
 SVGEOF
 done
@@ -148,19 +190,14 @@ cat >> "$OUT_FILE" <<SVGEOF
   <text x="$(( IGW_X + 60 ))" y="$(( IGW_Y + 18 ))" font-size="13" fill="#00d4ff" text-anchor="middle" font-weight="bold" font-family="monospace">IGW</text>
   <text x="$(( IGW_X + 60 ))" y="$(( IGW_Y + 34 ))" font-size="9" fill="#555" text-anchor="middle" font-family="monospace">$IGW_ID</text>
 
-  <!-- Internet -->
-  <text x="$(( VPC_W + 30 ))" y="$(( VPC_H / 2 ))" font-size="13" fill="#888" text-anchor="middle" font-family="monospace">Internet</text>
-  <line x1="$(( VPC_W + 20 ))" y1="$(( VPC_H / 2 + 10 ))" x2="$(( VPC_W + 20 ))" y2="$(( VPC_H / 2 - 10 ))"
-        stroke="#888" stroke-width="1"/>
-
 SVGEOF
 
-# ─── RT → IGW Pfeile für public Subnetze ─────────────────────────────────────
+# ─── RT → IGW Pfeile ─────────────────────────────────────────────────────────
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     IFS='|' read -r SN_NAME SN_CIDR SN_TYPE SN_IID <<< "${SN_BLOCKS[$n]}"
     X=$(( SN_START_X + (n-1) * (SN_W + SN_GAP) + 20 ))
-    RT_X=$(( X + 30 ))
-    RT_Y=$(( SN_Y + 200 ))
+    RT_X=$(( X + 36 ))
+    RT_Y=$(( SN_Y + 210 ))
 
     if [ "$SN_TYPE" == "public" ]; then
         cat >> "$OUT_FILE" <<SVGEOF
@@ -179,12 +216,14 @@ done
 
 # ─── IGW → Internet ───────────────────────────────────────────────────────────
 cat >> "$OUT_FILE" <<SVGEOF
-  <line x1="$(( IGW_X + 120 ))" y1="$(( IGW_Y + 22 ))" x2="$(( VPC_W + 20 ))" y2="$(( VPC_H / 2 ))"
+  <line x1="$(( IGW_X + 120 ))" y1="$(( IGW_Y + 22 ))" x2="$(( VPC_W + 30 ))" y2="$(( IGW_Y + 22 ))"
         stroke="#00d4ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="$(( VPC_W + 40 ))" y="$(( IGW_Y + 18 ))" font-size="12" fill="#888" font-family="monospace">Internet</text>
 
 </svg>
 SVGEOF
 
+# ─── Info-Box ─────────────────────────────────────────────────────────────────
 cat >> "$OUT_FILE" <<HTMLEOF
 <div class="info">
   <b>VPC:</b> <span>$VPC_ID</span> &nbsp;|&nbsp; <b>CIDR:</b> <span>$VPC_CIDR</span> &nbsp;|&nbsp;
@@ -195,6 +234,10 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     IFS='|' read -r SN_NAME SN_CIDR SN_TYPE SN_IID <<< "${SN_BLOCKS[$n]}"
     echo "  <b>Subnetz $n:</b> <span>$SN_NAME</span> &nbsp;$SN_CIDR&nbsp; [$SN_TYPE] &nbsp;SG: sec-$SN_NAME &nbsp;RT: rt-$SN_NAME<br>" >> "$OUT_FILE"
 done
+
+if [ -n "$LB_NAME" ]; then
+    echo "  <b>Load Balancer:</b> <span>$LB_NAME</span> &nbsp;[$LB_SCHEME] &nbsp;Status: $LB_STATE<br>" >> "$OUT_FILE"
+fi
 
 cat >> "$OUT_FILE" <<HTMLEOF
 </div>
