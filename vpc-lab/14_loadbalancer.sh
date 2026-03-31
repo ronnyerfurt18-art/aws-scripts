@@ -561,6 +561,264 @@ create_target_group() {
     fi
 }
 
+# ─── Load Balancer ändern ─────────────────────────────────────────────────────
+modify_lb() {
+    select_vpc || return
+
+    LB_RAW=$(aws elbv2 describe-load-balancers \
+        --query "LoadBalancers[].[LoadBalancerArn,LoadBalancerName,State.Code]" \
+        --output text --region "$REGION" 2>/dev/null)
+    if [ -z "$LB_RAW" ]; then
+        echo -e "  ${DIM}Keine Load Balancer vorhanden.${NC}"; return
+    fi
+
+    echo ""
+    echo -e "${YELLOW}Verfuegbare Load Balancer:${NC}"
+    local LB_ARNS=()
+    local LB_NAMES=()
+    local IDX=0
+    while IFS=$'\t' read -r LBARN LBNAME LBSTATE; do
+        LB_ARNS[$IDX]="$LBARN"
+        LB_NAMES[$IDX]="$LBNAME"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $LBNAME  ${DIM}($LBSTATE)${NC}"
+        (( IDX++ ))
+    done <<< "$LB_RAW"
+
+    echo ""
+    read -rp "  LB auswählen [1-$IDX]: " SEL
+    if ! [[ "$SEL" =~ ^[0-9]+$ ]] || [ "$SEL" -lt 1 ] || [ "$SEL" -gt "$IDX" ]; then
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; return
+    fi
+    local SEL_ARN="${LB_ARNS[$((SEL-1))]}"
+    local SEL_NAME="${LB_NAMES[$((SEL-1))]}"
+
+    while true; do
+        echo ""
+        echo -e "${BOLD}─── $SEL_NAME ändern ────────────────────────────────${NC}"
+        echo -e "  ${CYAN}[1]${NC}  Security Group hinzufügen"
+        echo -e "  ${CYAN}[2]${NC}  Security Group entfernen"
+        echo -e "  ${CYAN}[3]${NC}  Listener hinzufügen  ${DIM}(neuer Port)${NC}"
+        echo -e "  ${CYAN}[4]${NC}  Listener löschen"
+        echo -e "  ${CYAN}[5]${NC}  Instanzen in Target Group hinzufügen"
+        echo -e "  ${CYAN}[6]${NC}  Instanzen aus Target Group entfernen"
+        echo -e "  ${CYAN}[0]${NC}  Zurück"
+        echo ""
+        read -rp "  Auswahl: " MOD_CHOICE
+
+        case "$MOD_CHOICE" in
+        1)  # SG hinzufügen
+            echo ""
+            SG_RAW=$(aws ec2 describe-security-groups \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query "SecurityGroups[].[GroupId,GroupName]" \
+                --output text --region "$REGION" 2>/dev/null)
+            local SG_IDS=()
+            local SIDX=0
+            while IFS=$'\t' read -r SGID SGNAME; do
+                SG_IDS[$SIDX]="$SGID"
+                echo -e "  ${CYAN}[$((SIDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
+                (( SIDX++ ))
+            done <<< "$SG_RAW"
+            echo ""
+            read -rp "  SG hinzufügen [1-$SIDX]: " SGSEL
+            if ! [[ "$SGSEL" =~ ^[0-9]+$ ]] || [ "$SGSEL" -lt 1 ] || [ "$SGSEL" -gt "$SIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            # Bestehende SGs holen und neue anhängen
+            EXISTING_SGS=$(aws elbv2 describe-load-balancers \
+                --load-balancer-arns "$SEL_ARN" \
+                --query "LoadBalancers[0].SecurityGroups" \
+                --output text --region "$REGION" 2>/dev/null)
+            NEW_SG="${SG_IDS[$((SGSEL-1))]}"
+            ALL_SGS="$EXISTING_SGS $NEW_SG"
+            aws elbv2 set-security-groups \
+                --load-balancer-arn "$SEL_ARN" \
+                --security-groups $ALL_SGS \
+                --region "$REGION" > /dev/null 2>&1 \
+                && echo -e "  ${GREEN}✓ Security Group $NEW_SG hinzugefügt${NC}" \
+                || echo -e "  ${RED}Fehler beim Hinzufügen${NC}"
+            ;;
+        2)  # SG entfernen
+            echo ""
+            EXISTING_SGS=$(aws elbv2 describe-load-balancers \
+                --load-balancer-arns "$SEL_ARN" \
+                --query "LoadBalancers[0].SecurityGroups[]" \
+                --output text --region "$REGION" 2>/dev/null)
+            local SG_LIST=()
+            local SIDX=0
+            for SGID in $EXISTING_SGS; do
+                SGNAME=$(aws ec2 describe-security-groups --group-ids "$SGID" \
+                    --query "SecurityGroups[0].GroupName" --output text --region "$REGION" 2>/dev/null)
+                SG_LIST[$SIDX]="$SGID"
+                echo -e "  ${CYAN}[$((SIDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
+                (( SIDX++ ))
+            done
+            if [ "$SIDX" -le 1 ]; then
+                echo -e "  ${RED}ALB muss mindestens eine SG behalten.${NC}"; continue
+            fi
+            echo ""
+            read -rp "  SG entfernen [1-$SIDX]: " SGSEL
+            if ! [[ "$SGSEL" =~ ^[0-9]+$ ]] || [ "$SGSEL" -lt 1 ] || [ "$SGSEL" -gt "$SIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            REMOVE_SG="${SG_LIST[$((SGSEL-1))]}"
+            REMAINING=""
+            for SGID in "${SG_LIST[@]}"; do
+                [ "$SGID" != "$REMOVE_SG" ] && REMAINING+=" $SGID"
+            done
+            aws elbv2 set-security-groups \
+                --load-balancer-arn "$SEL_ARN" \
+                --security-groups $REMAINING \
+                --region "$REGION" > /dev/null 2>&1 \
+                && echo -e "  ${GREEN}✓ Security Group $REMOVE_SG entfernt${NC}" \
+                || echo -e "  ${RED}Fehler beim Entfernen${NC}"
+            ;;
+        3)  # Listener hinzufügen
+            echo ""
+            # Target Groups für diesen LB anzeigen
+            TG_RAW=$(aws elbv2 describe-target-groups \
+                --load-balancer-arn "$SEL_ARN" \
+                --query "TargetGroups[].[TargetGroupArn,TargetGroupName,Port]" \
+                --output text --region "$REGION" 2>/dev/null)
+            if [ -z "$TG_RAW" ]; then
+                echo -e "  ${RED}Keine Target Groups an diesem LB.${NC}"; continue
+            fi
+            local TG_ARNS=()
+            local TIDX=0
+            while IFS=$'\t' read -r TGARN TGNAME TGPORT; do
+                TG_ARNS[$TIDX]="$TGARN"
+                echo -e "  ${CYAN}[$((TIDX+1))]${NC}  $TGNAME  ${DIM}Port $TGPORT${NC}"
+                (( TIDX++ ))
+            done <<< "$TG_RAW"
+            echo ""
+            read -rp "  Ziel-Target-Group [1-$TIDX]: " TGSEL
+            if ! [[ "$TGSEL" =~ ^[0-9]+$ ]] || [ "$TGSEL" -lt 1 ] || [ "$TGSEL" -gt "$TIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            read -rp "  Neuer Listener-Port: " NEW_PORT
+            if ! [[ "$NEW_PORT" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}Ungültiger Port.${NC}"; continue
+            fi
+            aws elbv2 create-listener \
+                --load-balancer-arn "$SEL_ARN" \
+                --protocol HTTP --port "$NEW_PORT" \
+                --default-actions "Type=forward,TargetGroupArn=${TG_ARNS[$((TGSEL-1))]}" \
+                --region "$REGION" > /dev/null 2>&1 \
+                && echo -e "  ${GREEN}✓ Listener Port $NEW_PORT hinzugefügt${NC}" \
+                || echo -e "  ${RED}Fehler beim Erstellen des Listeners${NC}"
+            ;;
+        4)  # Listener löschen
+            echo ""
+            LISTENER_RAW=$(aws elbv2 describe-listeners \
+                --load-balancer-arn "$SEL_ARN" \
+                --query "Listeners[].[ListenerArn,Port]" \
+                --output text --region "$REGION" 2>/dev/null)
+            if [ -z "$LISTENER_RAW" ]; then
+                echo -e "  ${DIM}Keine Listener vorhanden.${NC}"; continue
+            fi
+            local LISTENER_ARNS=()
+            local LIDX=0
+            while IFS=$'\t' read -r LARN LPORT; do
+                LISTENER_ARNS[$LIDX]="$LARN"
+                echo -e "  ${CYAN}[$((LIDX+1))]${NC}  Port $LPORT"
+                (( LIDX++ ))
+            done <<< "$LISTENER_RAW"
+            echo ""
+            read -rp "  Listener löschen [1-$LIDX]: " LSEL
+            if ! [[ "$LSEL" =~ ^[0-9]+$ ]] || [ "$LSEL" -lt 1 ] || [ "$LSEL" -gt "$LIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            aws elbv2 delete-listener \
+                --listener-arn "${LISTENER_ARNS[$((LSEL-1))]}" \
+                --region "$REGION" > /dev/null 2>&1 \
+                && echo -e "  ${GREEN}✓ Listener gelöscht${NC}" \
+                || echo -e "  ${RED}Fehler beim Löschen${NC}"
+            ;;
+        5)  # Instanzen hinzufügen
+            echo ""
+            TG_RAW=$(aws elbv2 describe-target-groups \
+                --load-balancer-arn "$SEL_ARN" \
+                --query "TargetGroups[].[TargetGroupArn,TargetGroupName]" \
+                --output text --region "$REGION" 2>/dev/null)
+            local TG_ARNS=()
+            local TIDX=0
+            while IFS=$'\t' read -r TGARN TGNAME; do
+                TG_ARNS[$TIDX]="$TGARN"
+                echo -e "  ${CYAN}[$((TIDX+1))]${NC}  $TGNAME"
+                (( TIDX++ ))
+            done <<< "$TG_RAW"
+            read -rp "  Target Group [1-$TIDX]: " TGSEL
+            if ! [[ "$TGSEL" =~ ^[0-9]+$ ]] || [ "$TGSEL" -lt 1 ] || [ "$TGSEL" -gt "$TIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            SEL_TG_ARN="${TG_ARNS[$((TGSEL-1))]}"
+            select_instances
+            if [ ${#INSTANCE_IDS[@]} -gt 0 ]; then
+                TARGETS=$(printf "Id=%s " "${INSTANCE_IDS[@]}")
+                aws elbv2 register-targets \
+                    --target-group-arn "$SEL_TG_ARN" \
+                    --targets $TARGETS \
+                    --region "$REGION" > /dev/null 2>&1 \
+                    && echo -e "  ${GREEN}✓ Instanzen registriert${NC}" \
+                    || echo -e "  ${RED}Fehler beim Registrieren${NC}"
+            fi
+            ;;
+        6)  # Instanzen entfernen
+            echo ""
+            TG_RAW=$(aws elbv2 describe-target-groups \
+                --load-balancer-arn "$SEL_ARN" \
+                --query "TargetGroups[].[TargetGroupArn,TargetGroupName]" \
+                --output text --region "$REGION" 2>/dev/null)
+            local TG_ARNS=()
+            local TIDX=0
+            while IFS=$'\t' read -r TGARN TGNAME; do
+                TG_ARNS[$TIDX]="$TGARN"
+                echo -e "  ${CYAN}[$((TIDX+1))]${NC}  $TGNAME"
+                (( TIDX++ ))
+            done <<< "$TG_RAW"
+            read -rp "  Target Group [1-$TIDX]: " TGSEL
+            if ! [[ "$TGSEL" =~ ^[0-9]+$ ]] || [ "$TGSEL" -lt 1 ] || [ "$TGSEL" -gt "$TIDX" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            SEL_TG_ARN="${TG_ARNS[$((TGSEL-1))]}"
+            # Aktuelle Targets anzeigen
+            TARGETS_RAW=$(aws elbv2 describe-target-health \
+                --target-group-arn "$SEL_TG_ARN" \
+                --query "TargetHealthDescriptions[].[Target.Id,TargetHealth.State]" \
+                --output text --region "$REGION" 2>/dev/null)
+            if [ -z "$TARGETS_RAW" ]; then
+                echo -e "  ${DIM}Keine Targets registriert.${NC}"; continue
+            fi
+            local T_IDS=()
+            local TIDX2=0
+            while IFS=$'\t' read -r TID TSTATE; do
+                T_IDS[$TIDX2]="$TID"
+                TNAME=$(aws ec2 describe-instances --instance-ids "$TID" \
+                    --query "Reservations[0].Instances[0].Tags[?Key=='Name']|[0].Value" \
+                    --output text --region "$REGION" 2>/dev/null)
+                echo -e "  ${CYAN}[$((TIDX2+1))]${NC}  ${TNAME:-$TID}  ${DIM}($TSTATE)${NC}"
+                (( TIDX2++ ))
+            done <<< "$TARGETS_RAW"
+            echo ""
+            read -rp "  Instanz entfernen [1-$TIDX2]: " TSEL
+            if ! [[ "$TSEL" =~ ^[0-9]+$ ]] || [ "$TSEL" -lt 1 ] || [ "$TSEL" -gt "$TIDX2" ]; then
+                echo -e "${RED}Ungueltige Auswahl.${NC}"; continue
+            fi
+            aws elbv2 deregister-targets \
+                --target-group-arn "$SEL_TG_ARN" \
+                --targets "Id=${T_IDS[$((TSEL-1))]}" \
+                --region "$REGION" > /dev/null 2>&1 \
+                && echo -e "  ${GREEN}✓ Instanz entfernt${NC}" \
+                || echo -e "  ${RED}Fehler beim Entfernen${NC}"
+            ;;
+        0) return ;;
+        *) echo -e "${RED}Ungueltige Auswahl.${NC}" ;;
+        esac
+        echo ""
+        read -rp "  Enter zum Fortfahren..." _
+    done
+}
+
 # ─── Hauptmenü ────────────────────────────────────────────────────────────────
 while true; do
     clear
@@ -574,11 +832,12 @@ while true; do
     echo -e "  ${CYAN}[1]${NC}  Load Balancer erstellen"
     echo -e "       ${DIM}→ VPC + Subnetze (mind. 2 AZs) + ALB + Target Group + Listener${NC}"
     echo -e "  ${CYAN}[2]${NC}  Load Balancer anzeigen"
-    echo -e "  ${CYAN}[3]${NC}  Load Balancer loeschen"
+    echo -e "  ${CYAN}[3]${NC}  Load Balancer aendern  ${DIM}(SG, Listener, Targets)${NC}"
+    echo -e "  ${CYAN}[4]${NC}  Load Balancer loeschen"
     echo ""
     echo -e "${BOLD}─── Zielgruppen ─────────────────────────────────────${NC}"
-    echo -e "  ${CYAN}[4]${NC}  Zielgruppen anzeigen  ${DIM}(inkl. Health-Status der Targets)${NC}"
-    echo -e "  ${CYAN}[5]${NC}  Zielgruppe erstellen  ${DIM}(standalone, ohne LB)${NC}"
+    echo -e "  ${CYAN}[5]${NC}  Zielgruppen anzeigen  ${DIM}(inkl. Health-Status der Targets)${NC}"
+    echo -e "  ${CYAN}[6]${NC}  Zielgruppe erstellen  ${DIM}(standalone, ohne LB)${NC}"
     echo ""
     echo -e "  ${CYAN}[0]${NC}  Zurueck"
     echo ""
@@ -587,9 +846,10 @@ while true; do
     case "$CHOICE" in
         1) clear; create_lb; read -rp "Enter zum Fortfahren..." ;;
         2) clear; show_lbs; read -rp "Enter zum Fortfahren..." ;;
-        3) clear; delete_lb; read -rp "Enter zum Fortfahren..." ;;
-        4) clear; show_target_groups; read -rp "Enter zum Fortfahren..." ;;
-        5) clear; create_target_group; read -rp "Enter zum Fortfahren..." ;;
+        3) clear; modify_lb; read -rp "Enter zum Fortfahren..." ;;
+        4) clear; delete_lb; read -rp "Enter zum Fortfahren..." ;;
+        5) clear; show_target_groups; read -rp "Enter zum Fortfahren..." ;;
+        6) clear; create_target_group; read -rp "Enter zum Fortfahren..." ;;
         0) exit 0 ;;
         *) echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
