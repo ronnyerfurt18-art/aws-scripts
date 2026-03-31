@@ -34,8 +34,8 @@ LB_SCHEME=$(echo "$LB_RAW" | cut -f3)
 declare -a SN_BLOCKS
 for ((n=1; n<=SUBNET_COUNT; n++)); do
     NAME_VAR="SN_NAME_$n"; CIDR_VAR="SN_CIDR_$n"; TYPE_VAR="SN_TYPE_$n"
-    IID_VAR="INSTANCE_ID_$n"
-    SN_BLOCKS[$n]="${!NAME_VAR}|${!CIDR_VAR}|${!TYPE_VAR}|${!IID_VAR}"
+    IID_VAR="INSTANCE_ID_$n"; AZ_VAR="SN_AZ_$n"
+    SN_BLOCKS[$n]="${!NAME_VAR}|${!CIDR_VAR}|${!TYPE_VAR}|${!IID_VAR}|${!AZ_VAR}"
 done
 
 # ─── Layout berechnen ─────────────────────────────────────────────────────────
@@ -98,10 +98,6 @@ cat > "$OUT_FILE" <<HTMLEOF
   <text x="70" y="$(( VPC_Y + 26 ))" font-size="15" fill="#ff6b35" font-weight="bold" font-family="monospace">$VPC_CIDR</text>
   <text x="36" y="$(( VPC_Y + 44 ))" font-size="11" fill="#555" font-family="monospace">$VPC_ID</text>
 
-  <!-- AZ -->
-  <rect x="40" y="$(( VPC_Y + 60 ))" width="$(( VPC_W - 40 ))" height="$(( VPC_H - 120 ))" rx="10"
-        fill="none" stroke="#ff6b35" stroke-width="2" stroke-dasharray="10,5"/>
-  <text x="56" y="$(( VPC_Y + 80 ))" font-size="12" fill="#ff6b35" font-family="monospace">AZ: ${REGION}a / ${REGION}b</text>
 
 HTMLEOF
 
@@ -131,9 +127,21 @@ fi
 
 # ─── Subnetze zeichnen ────────────────────────────────────────────────────────
 for ((n=1; n<=SUBNET_COUNT; n++)); do
-    IFS='|' read -r SN_NAME SN_CIDR SN_TYPE SN_IID <<< "${SN_BLOCKS[$n]}"
+    IFS='|' read -r SN_NAME SN_CIDR SN_TYPE SN_IID SN_AZ <<< "${SN_BLOCKS[$n]}"
     X=$(( SN_START_X + (n-1) * (SN_W + SN_GAP) + 20 ))
     Y=$SN_Y
+    AZ_PAD=16
+    AZ_X=$(( X - AZ_PAD ))
+    AZ_Y=$(( Y - 28 ))
+    AZ_W=$(( SN_W + 2 * AZ_PAD ))
+    AZ_H=$(( SN_H + 44 ))
+
+    cat >> "$OUT_FILE" <<SVGEOF
+  <!-- AZ für Subnetz $n: ${SN_AZ:-?} -->
+  <rect x="$AZ_X" y="$AZ_Y" width="$AZ_W" height="$AZ_H" rx="10"
+        fill="none" stroke="#ff6b35" stroke-width="1.5" stroke-dasharray="8,4"/>
+  <text x="$(( AZ_X + 8 ))" y="$(( AZ_Y + 16 ))" font-size="10" fill="#ff6b35" font-family="monospace">AZ: ${SN_AZ:-unbekannt}</text>
+SVGEOF
 
     case "$SN_TYPE" in
         public)  BORDER="#00d4ff"; LABEL_COLOR="#00d4ff"; TYPE_LABEL="Public" ;;
