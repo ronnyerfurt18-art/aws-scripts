@@ -74,10 +74,10 @@ select_lb_subnets() {
     done <<< "$SN_RAW"
 
     echo ""
-    echo -e "  ${DIM}ALB benoetigt mind. 2 Subnetze in verschiedenen AZs.${NC}"
-    echo -e "  ${DIM}Fuer internet-facing ALB: Public Subnetze waehlen.${NC}"
+    echo -e "  ${DIM}Waehlen Sie die Subnetze, die der Load Balancer verwenden soll.${NC}"
+    echo -e "  ${DIM}Mindestens 2 Subnetze in verschiedenen AZs erforderlich. Fuer internet-facing ALB: Public Subnetze waehlen.${NC}"
     echo ""
-    read -rp "  Subnetz-Nummern (kommagetrennt, z.B. 1,2): " SN_SEL_INPUT
+    read -rp "  Subnetz-Auswahl (kommagetrennt, z.B. 1,2): " SN_SEL_INPUT
 
     LB_SUBNET_IDS=()
     local AZ_CHECK=()
@@ -123,7 +123,26 @@ select_lb_sg() {
     local IDX=0
     while IFS=$'\t' read -r SGID SGNAME; do
         SG_IDS_SEL[$IDX]="$SGID"
-        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
+        # Prüfen welche Listener-Ports bereits in dieser SG offen sind
+        local _PORT_HINTS=""
+        local _CHECK_PORTS=()
+        if [ ${#LISTENER_PORTS[@]} -gt 0 ]; then
+            _CHECK_PORTS=("${LISTENER_PORTS[@]}")
+        else
+            _CHECK_PORTS=("${LISTENER_PORT:-80}")
+        fi
+        for _CP in "${_CHECK_PORTS[@]}"; do
+            local _OPEN
+            _OPEN=$(aws ec2 describe-security-groups --group-ids "$SGID" --region "$REGION" \
+                --query "SecurityGroups[0].IpPermissions[?FromPort==\`$_CP\` && ToPort==\`$_CP\` && contains(IpRanges[].CidrIp, '0.0.0.0/0')]" \
+                --output text 2>/dev/null)
+            if [ -n "$_OPEN" ]; then
+                _PORT_HINTS+=" ${GREEN}✓ Port $_CP${NC}"
+            else
+                _PORT_HINTS+=" ${RED}✗ Port $_CP${NC}"
+            fi
+        done
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC} —$_PORT_HINTS"
         (( IDX++ ))
     done <<< "$SG_RAW"
     # LISTENER_PORTS gesetzt wenn aus create_lb aufgerufen, sonst Fallback auf LISTENER_PORT
@@ -143,7 +162,10 @@ select_lb_sg() {
             --group-name "sg-lb-$(date +%s)" \
             --description "Load Balancer SG ports $_SG_PORTS_LABEL" \
             --vpc-id "$VPC_ID" --region "$REGION" \
-            --query "GroupId" --output text 2>/dev/null)
+            --query "GroupId" --output text)
+        if [ -z "$LB_SG_ID" ] || [ "$LB_SG_ID" == "None" ]; then
+            echo -e "${RED}Fehler: Security Group konnte nicht erstellt werden.${NC}"; return 1
+        fi
         if [ ${#LISTENER_PORTS[@]} -gt 0 ]; then
             for _SP in "${LISTENER_PORTS[@]}"; do
                 aws ec2 authorize-security-group-ingress \
