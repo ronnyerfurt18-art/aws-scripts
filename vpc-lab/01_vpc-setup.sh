@@ -186,6 +186,22 @@ while true; do
     echo -e "${RED}Bitte eine gueltige Zahl eingeben.${NC}"
 done
 
+# ─── Verfügbare AZs abfragen ─────────────────────────────────────────────────
+echo ""
+echo -e "${YELLOW}Verfuegbare Availability Zones in $REGION:${NC}"
+AZ_RAW=$(aws ec2 describe-availability-zones \
+    --region "$REGION" \
+    --query "AvailabilityZones[?State=='available'].ZoneName" \
+    --output text 2>/dev/null)
+declare -a AVAIL_AZS
+AZ_IDX=0
+for AZ in $AZ_RAW; do
+    AVAIL_AZS[$AZ_IDX]="$AZ"
+    echo -e "  ${CYAN}[$((AZ_IDX+1))]${NC}  $AZ"
+    (( AZ_IDX++ ))
+done
+AZ_COUNT=$AZ_IDX
+
 # ─── Subnetz-Rechner ──────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}─── Subnetz-Rechner ─────────────────────────────${NC}"
@@ -228,7 +244,7 @@ done
 echo ""
 echo -e "${BOLD}─── Subnetz-Konfiguration ───────────────────────${NC}"
 
-declare -a SN_NAMES SN_CIDRS SN_TYPES SN_HAS_IGW
+declare -a SN_NAMES SN_CIDRS SN_TYPES SN_HAS_IGW SN_AZS
 NEEDS_IGW=false
 
 for ((n=1; n<=SUBNET_COUNT; n++)); do
@@ -327,6 +343,24 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
         break
     done
 
+    # ─── Availability Zone ──────────────────────────────────────────────────
+    DEFAULT_AZ_IDX=$(( (n-1) % AZ_COUNT ))
+    DEFAULT_AZ="${AVAIL_AZS[$DEFAULT_AZ_IDX]}"
+    echo ""
+    echo -e "  ${BOLD}Availability Zone:${NC}"
+    for ((az=0; az<AZ_COUNT; az++)); do
+        echo -e "    [${CYAN}$((az+1))${NC}]  ${AVAIL_AZS[$az]}"
+    done
+    read -rp "  AZ fuer dieses Subnetz [$((DEFAULT_AZ_IDX+1)) = $DEFAULT_AZ]: " AZ_SEL
+    AZ_SEL="${AZ_SEL:-$((DEFAULT_AZ_IDX+1))}"
+    if [[ "$AZ_SEL" =~ ^[0-9]+$ ]] && [ "$AZ_SEL" -ge 1 ] && [ "$AZ_SEL" -le "$AZ_COUNT" ]; then
+        SN_AZS[$n]="${AVAIL_AZS[$((AZ_SEL-1))]}"
+    else
+        SN_AZS[$n]="$DEFAULT_AZ"
+    fi
+    echo -e "  ${GREEN}✓ AZ:${NC} ${SN_AZS[$n]}"
+    echo ""
+
     echo -e "  Zugriffstyp:"
     echo -e "    [1] Public       - oeffentlich erreichbar (mit Internet Gateway)"
     echo -e "    [2] Private      - kein Zugriff von aussen, nur intern"
@@ -380,7 +414,7 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
             fi ;;
         none)    T="${YELLOW}Keine Zuweisung${NC}" ;;
     esac
-    echo -e "  Subnetz $n: ${CYAN}${SN_NAMES[$n]}${NC}  ${SN_CIDRS[$n]}  → $T"
+    echo -e "  Subnetz $n: ${CYAN}${SN_NAMES[$n]}${NC}  ${SN_CIDRS[$n]}  ${DIM}${SN_AZS[$n]}${NC}  → $T"
     echo -e "    Security Group: sec-${SN_NAMES[$n]}"
     echo -e "    Route Table:    rt-${SN_NAMES[$n]}"
     if [ -n "${SN_EXTRA_PORTS[$n]}" ]; then
@@ -417,14 +451,14 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     SID=$(aws ec2 create-subnet \
         --vpc-id "$VPC_ID" \
         --cidr-block "${SN_CIDRS[$n]}" \
-        --availability-zone "${REGION}a" \
+        --availability-zone "${SN_AZS[$n]}" \
         --region "$REGION" \
         --query "Subnet.SubnetId" --output text 2>&1)
 
     if [[ "$SID" == subnet-* ]]; then
         aws ec2 create-tags --resources "$SID" --tags Key=Name,Value="${SN_NAMES[$n]}" --region "$REGION"
         SUBNET_IDS[$n]="$SID"
-        echo -e "  ${GREEN}✓ ${SN_NAMES[$n]}${NC}: $SID  (${SN_CIDRS[$n]})"
+        echo -e "  ${GREEN}✓ ${SN_NAMES[$n]}${NC}: $SID  (${SN_CIDRS[$n]}  ${SN_AZS[$n]})"
     else
         rollback "Subnetz '${SN_NAMES[$n]}' (${SN_CIDRS[$n]}) konnte nicht erstellt werden: $SID"
     fi
@@ -555,6 +589,7 @@ done
         echo "SN_CIDR_$n=${SN_CIDRS[$n]}"
         echo "SN_TYPE_$n=${SN_TYPES[$n]}"
         echo "SN_HAS_IGW_$n=${SN_HAS_IGW[$n]}"
+        echo "SN_AZ_$n=${SN_AZS[$n]}"
         echo "SN_EXTRA_PORTS_$n=${SN_EXTRA_PORTS[$n]}"
         echo "SUBNET_ID_$n=${SUBNET_IDS[$n]}"
         echo "RT_ID_$n=${RT_IDS[$n]}"

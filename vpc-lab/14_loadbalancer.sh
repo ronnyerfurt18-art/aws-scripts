@@ -1,0 +1,405 @@
+#!/bin/bash
+
+# Load Balancer verwalten (ALB)
+# Erstellen, anzeigen, loeschen
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$SCRIPT_DIR/config.env" ] && source "$SCRIPT_DIR/config.env"
+[ -z "$REGION" ] && REGION="us-east-1"
+
+# ─── VPC wählen ───────────────────────────────────────────────────────────────
+select_vpc() {
+    if [ -f "$SCRIPT_DIR/01_output.env" ] && grep -q "VPC_ID=vpc-" "$SCRIPT_DIR/01_output.env"; then
+        source "$SCRIPT_DIR/01_output.env"
+        echo -e "  Aktives VPC: ${CYAN}$VPC_ID${NC}  ($VPC_CIDR)"
+        read -rp "  Dieses VPC verwenden? [J/n]: " USE_CURRENT
+        [[ ! "$USE_CURRENT" =~ ^[Nn]$ ]] && return 0
+    fi
+
+    echo -e "${YELLOW}VPCs in $REGION abfragen...${NC}"
+    VPC_RAW=$(aws ec2 describe-vpcs \
+        --query "Vpcs[].[VpcId,CidrBlock,Tags[?Key=='Name']|[0].Value]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    [ -z "$VPC_RAW" ] && echo -e "${RED}Keine VPCs gefunden.${NC}" && return 1
+
+    VPC_IDS_SEL=()
+    local IDX=0
+    while IFS=$'\t' read -r VID VCIDR VNAME; do
+        [ "$VNAME" == "None" ] && VNAME="-"
+        VPC_IDS_SEL[$IDX]="$VID"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $VID  $VCIDR  ${DIM}$VNAME${NC}"
+        (( IDX++ ))
+    done <<< "$VPC_RAW"
+
+    echo ""
+    read -rp "VPC auswaehlen [1-$IDX]: " SEL
+    if ! [[ "$SEL" =~ ^[0-9]+$ ]] || [ "$SEL" -lt 1 ] || [ "$SEL" -gt "$IDX" ]; then
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; return 1
+    fi
+    VPC_ID="${VPC_IDS_SEL[$((SEL-1))]}"
+    VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC_ID" \
+        --query "Vpcs[0].CidrBlock" --output text --region "$REGION" 2>/dev/null)
+}
+
+# ─── Subnetze für LB auswählen ────────────────────────────────────────────────
+select_lb_subnets() {
+    echo ""
+    echo -e "${YELLOW}Subnetze in VPC $VPC_ID:${NC}"
+
+    SN_RAW=$(aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "Subnets[].[SubnetId,AvailabilityZone,CidrBlock,Tags[?Key=='Name']|[0].Value,MapPublicIpOnLaunch]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    [ -z "$SN_RAW" ] && echo -e "${RED}Keine Subnetze gefunden.${NC}" && return 1
+
+    SN_IDS_SEL=(); SN_AZS_SEL=()
+    local IDX=0
+    while IFS=$'\t' read -r SID SAZ SCIDR SNAME SPUB; do
+        [ "$SNAME" == "None" ] && SNAME="$SID"
+        SN_IDS_SEL[$IDX]="$SID"
+        SN_AZS_SEL[$IDX]="$SAZ"
+        [ "$SPUB" == "True" ] && PUB_LABEL="${GREEN}[Public]${NC}" || PUB_LABEL="${RED}[Private]${NC}"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SNAME  $SCIDR  $SAZ  $PUB_LABEL"
+        (( IDX++ ))
+    done <<< "$SN_RAW"
+
+    echo ""
+    echo -e "  ${DIM}ALB benoetigt mind. 2 Subnetze in verschiedenen AZs.${NC}"
+    echo -e "  ${DIM}Fuer internet-facing ALB: Public Subnetze waehlen.${NC}"
+    echo ""
+    read -rp "  Subnetz-Nummern (kommagetrennt, z.B. 1,2): " SN_SEL_INPUT
+
+    LB_SUBNET_IDS=()
+    local AZ_CHECK=()
+    IFS=',' read -ra SN_PARTS <<< "$SN_SEL_INPUT"
+    for P in "${SN_PARTS[@]}"; do
+        P=$(echo "$P" | tr -d ' \r')
+        if [[ "$P" =~ ^[0-9]+$ ]] && [ "$P" -ge 1 ] && [ "$P" -le "$IDX" ]; then
+            local I=$((P-1))
+            LB_SUBNET_IDS[${#LB_SUBNET_IDS[@]}]="${SN_IDS_SEL[$I]}"
+            AZ_CHECK[${#AZ_CHECK[@]}]="${SN_AZS_SEL[$I]}"
+        fi
+    done
+
+    if [ ${#LB_SUBNET_IDS[@]} -lt 2 ]; then
+        echo -e "${RED}Mindestens 2 Subnetze erforderlich.${NC}"; return 1
+    fi
+
+    # AZ-Diversitaet pruefen
+    local AZ1="${AZ_CHECK[0]}"
+    local ALL_SAME=true
+    for AZ in "${AZ_CHECK[@]}"; do
+        [ "$AZ" != "$AZ1" ] && ALL_SAME=false && break
+    done
+    if $ALL_SAME; then
+        echo -e "${RED}Alle gewahlten Subnetze sind in derselben AZ ($AZ1).${NC}"
+        echo -e "${RED}ALB benoetigt Subnetze in verschiedenen AZs.${NC}"
+        return 1
+    fi
+    echo -e "  ${GREEN}✓ AZ-Pruefung bestanden${NC}"
+}
+
+# ─── Security Group für LB wählen ─────────────────────────────────────────────
+select_lb_sg() {
+    echo ""
+    echo -e "${YELLOW}Security Groups in VPC $VPC_ID:${NC}"
+
+    SG_RAW=$(aws ec2 describe-security-groups \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "SecurityGroups[].[GroupId,GroupName]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    SG_IDS_SEL=()
+    local IDX=0
+    while IFS=$'\t' read -r SGID SGNAME; do
+        SG_IDS_SEL[$IDX]="$SGID"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $SGNAME  ${DIM}$SGID${NC}"
+        (( IDX++ ))
+    done <<< "$SG_RAW"
+    echo -e "  ${CYAN}[$((IDX+1))]${NC}  Neue SG fuer LB erstellen  ${DIM}(Port 80+443 von ueberall)${NC}"
+
+    echo ""
+    read -rp "  Auswahl: " SG_SEL
+
+    if [ "$SG_SEL" == "$((IDX+1))" ]; then
+        LB_SG_ID=$(aws ec2 create-security-group \
+            --group-name "sg-lb-$(date +%s)" \
+            --description "Load Balancer SG HTTP HTTPS" \
+            --vpc-id "$VPC_ID" --region "$REGION" \
+            --query "GroupId" --output text 2>/dev/null)
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$LB_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 \
+            --region "$REGION" > /dev/null
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$LB_SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0 \
+            --region "$REGION" > /dev/null
+        echo -e "  ${GREEN}✓ Neue SG erstellt:${NC} $LB_SG_ID"
+    elif [[ "$SG_SEL" =~ ^[0-9]+$ ]] && [ "$SG_SEL" -ge 1 ] && [ "$SG_SEL" -le "$IDX" ]; then
+        LB_SG_ID="${SG_IDS_SEL[$((SG_SEL-1))]}"
+        echo -e "  ${GREEN}✓ Gewaehlt:${NC} $LB_SG_ID"
+    else
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; return 1
+    fi
+}
+
+# ─── Load Balancer erstellen ───────────────────────────────────────────────────
+create_lb() {
+    echo -e "${BOLD}=== Load Balancer erstellen ===${NC}"
+    echo ""
+    select_vpc || return
+    select_lb_subnets || return
+    select_lb_sg || return
+
+    echo ""
+    read -rp "  Load Balancer Name [alb-lab]: " LB_NAME
+    LB_NAME="${LB_NAME:-alb-lab}"
+
+    echo ""
+    echo -e "  Schema:"
+    echo -e "    [1] internet-facing  ${DIM}(oeffentlich erreichbar)${NC}"
+    echo -e "    [2] internal         ${DIM}(nur intern im VPC)${NC}"
+    read -rp "  Auswahl [1]: " SCHEME_SEL
+    [ "${SCHEME_SEL:-1}" == "2" ] && LB_SCHEME="internal" || LB_SCHEME="internet-facing"
+
+    echo ""
+    read -rp "  Target Group Name [tg-lab]: " TG_NAME
+    TG_NAME="${TG_NAME:-tg-lab}"
+    read -rp "  Target Port [80]: " TG_PORT
+    TG_PORT="${TG_PORT:-80}"
+
+    # Target Group erstellen
+    echo ""
+    echo -e "${YELLOW}[1/3] Target Group erstellen...${NC}"
+    TG_ARN=$(aws elbv2 create-target-group \
+        --name "$TG_NAME" \
+        --protocol HTTP \
+        --port "$TG_PORT" \
+        --vpc-id "$VPC_ID" \
+        --target-type instance \
+        --region "$REGION" \
+        --query "TargetGroups[0].TargetGroupArn" --output text 2>&1)
+
+    if [[ "$TG_ARN" != arn:* ]]; then
+        echo -e "${RED}Fehler TG: $TG_ARN${NC}"; return 1
+    fi
+    echo -e "  ${GREEN}✓ $TG_NAME${NC}"
+
+    # EC2 Instanzen als Targets registrieren
+    echo ""
+    echo -e "${YELLOW}Laufende Instanzen im VPC:${NC}"
+    INST_RAW=$(aws ec2 describe-instances \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=instance-state-name,Values=running" \
+        --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name']|[0].Value,PrivateIpAddress]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    INST_IDS_SEL=()
+    local IDX=0
+    if [ -n "$INST_RAW" ]; then
+        while IFS=$'\t' read -r IID INAME IIP; do
+            [ "$INAME" == "None" ] && INAME="$IID"
+            INST_IDS_SEL[$IDX]="$IID"
+            echo -e "  ${CYAN}[$((IDX+1))]${NC}  $INAME  ${DIM}$IIP  $IID${NC}"
+            (( IDX++ ))
+        done <<< "$INST_RAW"
+        echo ""
+        echo -e "  ${DIM}Nummern kommagetrennt, oder Enter fuer keine:${NC}"
+        read -rp "  Instanzen registrieren: " INST_SEL_INPUT
+
+        if [ -n "$INST_SEL_INPUT" ]; then
+            TARGETS=""
+            IFS=',' read -ra INST_PARTS <<< "$INST_SEL_INPUT"
+            for P in "${INST_PARTS[@]}"; do
+                P=$(echo "$P" | tr -d ' \r')
+                [[ "$P" =~ ^[0-9]+$ ]] && [ "$P" -ge 1 ] && [ "$P" -le "$IDX" ] \
+                    && TARGETS="$TARGETS Id=${INST_IDS_SEL[$((P-1))]}"
+            done
+            if [ -n "$TARGETS" ]; then
+                aws elbv2 register-targets \
+                    --target-group-arn "$TG_ARN" \
+                    --targets $TARGETS \
+                    --region "$REGION" > /dev/null
+                echo -e "  ${GREEN}✓ Targets registriert${NC}"
+            fi
+        fi
+    else
+        echo -e "  ${DIM}Keine laufenden Instanzen.${NC}"
+    fi
+
+    # Load Balancer erstellen
+    echo ""
+    echo -e "${YELLOW}[2/3] Load Balancer erstellen...${NC}"
+    SUBNET_ARGS=""
+    for SID in "${LB_SUBNET_IDS[@]}"; do SUBNET_ARGS="$SUBNET_ARGS $SID"; done
+
+    LB_ARN=$(aws elbv2 create-load-balancer \
+        --name "$LB_NAME" \
+        --subnets $SUBNET_ARGS \
+        --security-groups "$LB_SG_ID" \
+        --scheme "$LB_SCHEME" \
+        --type application \
+        --ip-address-type ipv4 \
+        --region "$REGION" \
+        --query "LoadBalancers[0].LoadBalancerArn" --output text 2>&1)
+
+    if [[ "$LB_ARN" != arn:* ]]; then
+        echo -e "${RED}Fehler LB: $LB_ARN${NC}"; return 1
+    fi
+
+    LB_DNS=$(aws elbv2 describe-load-balancers \
+        --load-balancer-arns "$LB_ARN" \
+        --query "LoadBalancers[0].DNSName" --output text --region "$REGION" 2>/dev/null)
+    echo -e "  ${GREEN}✓ $LB_NAME${NC}: $LB_DNS"
+
+    # Listener erstellen
+    echo ""
+    echo -e "${YELLOW}[3/3] Listener HTTP:80 erstellen...${NC}"
+    LISTENER_ARN=$(aws elbv2 create-listener \
+        --load-balancer-arn "$LB_ARN" \
+        --protocol HTTP --port 80 \
+        --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
+        --region "$REGION" \
+        --query "Listeners[0].ListenerArn" --output text 2>&1)
+
+    if [[ "$LISTENER_ARN" == arn:* ]]; then
+        echo -e "  ${GREEN}✓ Listener HTTP:80 → $TG_NAME${NC}"
+    else
+        echo -e "  ${RED}Fehler Listener: $LISTENER_ARN${NC}"
+    fi
+
+    echo ""
+    echo -e "${BOLD}=== Load Balancer erstellt ===${NC}"
+    echo ""
+    echo -e "  Name:   ${CYAN}$LB_NAME${NC}"
+    echo -e "  DNS:    ${CYAN}$LB_DNS${NC}"
+    echo -e "  Schema: ${CYAN}$LB_SCHEME${NC}"
+    echo -e "  TG:     ${CYAN}$TG_NAME  Port $TG_PORT${NC}"
+    echo ""
+    echo -e "  Testen: ${CYAN}curl http://$LB_DNS${NC}"
+    echo -e "  ${DIM}(kann 1-2 Minuten dauern bis der LB aktiv ist)${NC}"
+}
+
+# ─── Load Balancer anzeigen ───────────────────────────────────────────────────
+show_lbs() {
+    echo -e "${BOLD}─── Load Balancer in $REGION ─────────────────────────${NC}"
+    echo ""
+
+    LB_RAW=$(aws elbv2 describe-load-balancers \
+        --query "LoadBalancers[].[LoadBalancerName,DNSName,State.Code,Scheme,Type,VpcId]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ -z "$LB_RAW" ]; then
+        echo -e "  ${DIM}Keine Load Balancer vorhanden.${NC}"; return
+    fi
+
+    while IFS=$'\t' read -r LBNAME LBDNS LBSTATE LBSCHEME LBTYPE LBVPC; do
+        [ "$LBSTATE" == "active" ] && S="${GREEN}●${NC}" || S="${YELLOW}●${NC}"
+        echo -e "  $S ${BOLD}$LBNAME${NC}  ${DIM}[$LBTYPE / $LBSCHEME]${NC}"
+        echo -e "     DNS:   ${CYAN}$LBDNS${NC}"
+        echo -e "     State: $LBSTATE   VPC: $LBVPC"
+        echo ""
+    done <<< "$LB_RAW"
+}
+
+# ─── Load Balancer löschen ────────────────────────────────────────────────────
+delete_lb() {
+    echo -e "${BOLD}─── Load Balancer loeschen ──────────────────────────${NC}"
+    echo ""
+
+    LB_RAW=$(aws elbv2 describe-load-balancers \
+        --query "LoadBalancers[].[LoadBalancerArn,LoadBalancerName]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ -z "$LB_RAW" ]; then
+        echo -e "  ${DIM}Keine Load Balancer vorhanden.${NC}"; return
+    fi
+
+    LB_ARNS_SEL=()
+    local IDX=0
+    while IFS=$'\t' read -r LBARN LBNAME; do
+        LB_ARNS_SEL[$IDX]="$LBARN"
+        echo -e "  ${CYAN}[$((IDX+1))]${NC}  $LBNAME"
+        (( IDX++ ))
+    done <<< "$LB_RAW"
+
+    echo ""
+    read -rp "LB zum Loeschen [1-$IDX]: " SEL
+    if ! [[ "$SEL" =~ ^[0-9]+$ ]] || [ "$SEL" -lt 1 ] || [ "$SEL" -gt "$IDX" ]; then
+        echo -e "${RED}Ungueltige Auswahl.${NC}"; return
+    fi
+    SEL_ARN="${LB_ARNS_SEL[$((SEL-1))]}"
+
+    # Target Groups vor dem Loeschen merken
+    TG_ARNS=$(aws elbv2 describe-target-groups \
+        --load-balancer-arn "$SEL_ARN" \
+        --query "TargetGroups[].TargetGroupArn" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    # Listeners loeschen
+    LISTENER_ARNS=$(aws elbv2 describe-listeners \
+        --load-balancer-arn "$SEL_ARN" \
+        --query "Listeners[].ListenerArn" \
+        --output text --region "$REGION" 2>/dev/null)
+    for LARN in $LISTENER_ARNS; do
+        aws elbv2 delete-listener --listener-arn "$LARN" --region "$REGION" 2>/dev/null
+    done
+
+    read -rp "  Wirklich loeschen? [j/N]: " CONFIRM
+    [[ ! "$CONFIRM" =~ ^[JjYy]$ ]] && return
+
+    RESULT=$(aws elbv2 delete-load-balancer \
+        --load-balancer-arn "$SEL_ARN" --region "$REGION" 2>&1)
+
+    if echo "$RESULT" | grep -qi "error"; then
+        echo -e "  ${RED}Fehler: $RESULT${NC}"
+    else
+        echo -e "  ${GREEN}✓ Load Balancer geloescht${NC}"
+    fi
+
+    if [ -n "$TG_ARNS" ]; then
+        echo ""
+        read -rp "  Target Groups ebenfalls loeschen? [j/N]: " TG_CONFIRM
+        if [[ "$TG_CONFIRM" =~ ^[JjYy]$ ]]; then
+            for TGARN in $TG_ARNS; do
+                aws elbv2 delete-target-group \
+                    --target-group-arn "$TGARN" --region "$REGION" > /dev/null 2>&1
+                echo -e "  ${GREEN}✓ Target Group geloescht${NC}"
+            done
+        fi
+    fi
+}
+
+# ─── Hauptmenü ────────────────────────────────────────────────────────────────
+while true; do
+    clear
+    echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║           Load Balancer verwalten               ║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  Region: ${CYAN}$REGION${NC}"
+    echo ""
+    echo -e "  ${CYAN}[1]${NC}  Load Balancer erstellen"
+    echo -e "       ${DIM}→ VPC + Subnetze (mind. 2 AZs) + ALB + Target Group + Listener${NC}"
+    echo -e "  ${CYAN}[2]${NC}  Load Balancer anzeigen"
+    echo -e "  ${CYAN}[3]${NC}  Load Balancer loeschen"
+    echo -e "  ${CYAN}[0]${NC}  Zurueck"
+    echo ""
+    read -rp "Auswahl: " CHOICE
+
+    case "$CHOICE" in
+        1) clear; create_lb; read -rp "Enter zum Fortfahren..." ;;
+        2) clear; show_lbs; read -rp "Enter zum Fortfahren..." ;;
+        3) clear; delete_lb; read -rp "Enter zum Fortfahren..." ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
+    esac
+done

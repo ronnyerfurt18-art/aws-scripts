@@ -207,6 +207,10 @@ while true; do
     echo -e "  ${CYAN}[20]${NC} Einzelne Datei in S3 hochladen"
     echo -e "       ${DIM}→ ../s3-upload-datei.sh${NC}"
     echo ""
+    echo -e "${BOLD}─── Load Balancer ───────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[22]${NC} Load Balancer verwalten  ${DIM}(ALB erstellen, anzeigen, loeschen)${NC}"
+    echo -e "       ${DIM}→ 14_loadbalancer.sh${NC}"
+    echo ""
     echo -e "${BOLD}─── Aufraeumen ──────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[21]${NC} ${RED}Ressourcen loeschen / Teardown${NC}"
     echo -e "       ${DIM}→ 05_teardown.sh  (einzeln oder alles – Auswahl im naechsten Schritt)${NC}"
@@ -238,6 +242,7 @@ while true; do
         19) bash "$SCRIPT_DIR/../s3-student-json.sh" ;;
         20) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
         21) bash "$SCRIPT_DIR/05_teardown.sh" ;;
+        22) bash "$SCRIPT_DIR/14_loadbalancer.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;
