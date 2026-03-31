@@ -129,6 +129,19 @@ echo -e "  VPC:    ${CYAN}$VPC_ID${NC}  ($VPC_CIDR)  Region: $REGION"
 ! $VPC_EXISTS && echo -e "  ${YELLOW}Hinweis: VPC existiert nicht mehr in AWS – .env enthält veraltete IDs.${NC}"
 echo ""
 
+# Load Balancer (live abfragen)
+LB_LIST=$(aws elbv2 describe-load-balancers \
+    --query "LoadBalancers[?VpcId=='$VPC_ID'].[LoadBalancerName,State.Code,LoadBalancerArn]" \
+    --output text --region "$REGION" 2>/dev/null)
+echo ""
+if [ -n "$LB_LIST" ]; then
+    while IFS=$'\t' read -r LBNAME LBSTATE LBARN; do
+        echo -e "  [9] LB   $LBNAME  ${DIM}$LBSTATE${NC}"
+    done <<< "$LB_LIST"
+else
+    echo -e "  ${DIM}[9] LB   – keine Load Balancer${NC}"
+fi
+
 # EC2 Instanzen
 EC2_FOUND=false
 for ((n=1; n<=SUBNET_COUNT; n++)); do
@@ -244,7 +257,7 @@ echo -e "  [7] .env Dateien leeren  ${DIM}(01_output.env + 02_output.env)${NC}"
 
 echo ""
 echo -e "${BOLD}────────────────────────────────────────────────────${NC}"
-echo -e "  ${RED}[A]${NC} Alles loeschen  ${DIM}(vollstaendiger Teardown, 1→7)${NC}"
+echo -e "  ${RED}[A]${NC} Alles loeschen  ${DIM}(vollstaendiger Teardown, 1→9)${NC}"
 echo -e "  ${CYAN}Nummern${NC} kommagetrennt eingeben  ${DIM}(z.B. 1  oder  1,2  oder  1,2,6,7)${NC}"
 echo -e "  [0] Abbrechen"
 echo ""
@@ -254,13 +267,13 @@ read -rp "Auswahl: " RAW_SEL
 
 # Auswahl aufloesen
 if [[ "$RAW_SEL" =~ ^[Aa]$ ]]; then
-    SEL_SET="1 2 3 4 5 6 7 8"
+    SEL_SET="1 2 3 4 5 6 7 8 9"
 else
     SEL_SET=""
     IFS=',' read -ra PARTS <<< "$RAW_SEL"
     for P in "${PARTS[@]}"; do
         P=$(echo "$P" | tr -d ' \r')
-        [[ "$P" =~ ^[1-8]$ ]] && SEL_SET="$SEL_SET $P"
+        [[ "$P" =~ ^[1-9]$ ]] && SEL_SET="$SEL_SET $P"
     done
     if [ -z "$SEL_SET" ]; then
         echo -e "${RED}Keine gueltige Auswahl.${NC}"; exit 1
@@ -269,13 +282,14 @@ fi
 
 # Abhaengigkeiten automatisch ergaenzen:
 # Subnetz [3] benoetigt SG [2] vorher
-# VPC [6] benoetigt SG [2], SN [3], RT [4], IGW [5] vorher
+# VPC [6] benoetigt LB [9], SG [2], SN [3], RT [4], IGW [5] vorher
 [[ "$SEL_SET" == *" 3"* || "$SEL_SET" == *"3 "* || "$SEL_SET" =~ ^3$ ]] && SEL_SET="$SEL_SET 2"
-[[ "$SEL_SET" == *" 6"* || "$SEL_SET" == *"6 "* || "$SEL_SET" =~ ^6$ ]] && SEL_SET="$SEL_SET 2 3 4 5"
+[[ "$SEL_SET" == *" 6"* || "$SEL_SET" == *"6 "* || "$SEL_SET" =~ ^6$ ]] && SEL_SET="$SEL_SET 9 2 3 4 5"
 
-# Duplikate entfernen, in fester Reihenfolge 1-8 sortieren (Bash 3.2 kompatibel)
+# Duplikate entfernen, in fester Reihenfolge sortieren (Bash 3.2 kompatibel)
+# 9 (LB) vor 2 (SG), da LB SGs referenziert
 STEPS=()
-for S in 1 2 3 4 5 6 7 8; do
+for S in 1 9 2 3 4 5 8 6 7; do
     [[ " $SEL_SET " == *" $S "* ]] && STEPS[${#STEPS[@]}]="$S"
 done
 
@@ -292,6 +306,7 @@ for S in "${STEPS[@]}"; do
         6) echo -e "  ${RED}✗${NC} VPC loeschen" ;;
         7) echo -e "  ${RED}✗${NC} .env Dateien leeren" ;;
         8) echo -e "  ${RED}✗${NC} Benutzerdefinierte ACLs loeschen" ;;
+        9) echo -e "  ${RED}✗${NC} Load Balancer + Target Groups loeschen" ;;
     esac
 done
 echo ""
@@ -340,6 +355,54 @@ if has_step 1; then
         echo -e "  ${GREEN}✓ Alle Instanzen terminiert.${NC}"
     else
         echo -e "  ${DIM}Keine aktiven Instanzen – nichts zu tun.${NC}"
+    fi
+fi
+
+# ─── 9. Load Balancer + Target Groups loeschen ───────────────────────────────
+if has_step 9; then
+    echo -e "${YELLOW}[9] Load Balancer + Target Groups loeschen...${NC}"
+    LB_ARNS=$(aws elbv2 describe-load-balancers \
+        --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" \
+        --output text --region "$REGION" 2>/dev/null)
+    if [ -z "$LB_ARNS" ]; then
+        echo -e "  ${DIM}Keine Load Balancer gefunden.${NC}"
+    else
+        for LB_ARN in $LB_ARNS; do
+            LB_NAME=$(aws elbv2 describe-load-balancers --load-balancer-arns "$LB_ARN" \
+                --query "LoadBalancers[0].LoadBalancerName" --output text --region "$REGION" 2>/dev/null)
+            # Listeners zuerst loeschen
+            LISTENER_ARNS=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
+                --query "Listeners[].ListenerArn" --output text --region "$REGION" 2>/dev/null)
+            for LARN in $LISTENER_ARNS; do
+                aws elbv2 delete-listener --listener-arn "$LARN" --region "$REGION" > /dev/null 2>&1
+            done
+            # Target Groups merken
+            TG_ARNS=$(aws elbv2 describe-target-groups --load-balancer-arn "$LB_ARN" \
+                --query "TargetGroups[].TargetGroupArn" --output text --region "$REGION" 2>/dev/null)
+            # LB loeschen
+            RESULT=$(aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region "$REGION" 2>&1)
+            classify_result "$RESULT"
+            case $? in
+                0) echo -e "  ${GREEN}✓ LB${NC}: $LB_NAME geloescht" ;;
+                1) echo -e "  ${DIM}  LB: $LB_NAME  [bereits geloescht]${NC}" ;;
+                2) echo -e "  ${RED}  Fehler LB: $RESULT${NC}" ;;
+            esac
+            # Target Groups loeschen (kurz warten bis LB weg)
+            if [ -n "$TG_ARNS" ]; then
+                sleep 5
+                for TGARN in $TG_ARNS; do
+                    TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$TGARN" \
+                        --query "TargetGroups[0].TargetGroupName" --output text --region "$REGION" 2>/dev/null)
+                    TGRESULT=$(aws elbv2 delete-target-group --target-group-arn "$TGARN" --region "$REGION" 2>&1)
+                    classify_result "$TGRESULT"
+                    case $? in
+                        0) echo -e "  ${GREEN}✓ TG${NC}: ${TG_NAME:-$TGARN} geloescht" ;;
+                        1) echo -e "  ${DIM}  TG: ${TG_NAME:-$TGARN}  [bereits geloescht]${NC}" ;;
+                        2) echo -e "  ${RED}  Fehler TG: $TGRESULT${NC}" ;;
+                    esac
+                done
+            fi
+        done
     fi
 fi
 
