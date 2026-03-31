@@ -40,7 +40,18 @@ for ((n=1; n<=SUBNET_COUNT; n++)); do
     SID_VAR="SUBNET_ID_$n"
     RT_VAR="RT_ID_$n"
 
-    if [ "${!HAS_IGW_VAR}" == "true" ] && [ "${!TYPE_VAR}" == "private" ]; then
+    # Live-Prüfung: hat die Route Table eine 0.0.0.0/0 → IGW Route?
+    RT_ID_CHECK="${!RT_VAR}"
+    LIVE_HAS_IGW=false
+    if [ -n "$RT_ID_CHECK" ]; then
+        IGW_ROUTE=$(aws ec2 describe-route-tables \
+            --route-table-ids "$RT_ID_CHECK" \
+            --query "RouteTables[0].Routes[?DestinationCidrBlock=='0.0.0.0/0' && GatewayId!=null && starts_with(GatewayId,'igw-')].GatewayId" \
+            --output text --region "$REGION" 2>/dev/null)
+        [ -n "$IGW_ROUTE" ] && LIVE_HAS_IGW=true
+    fi
+
+    if $LIVE_HAS_IGW && [ "${!TYPE_VAR}" == "private" ]; then
         CANDIDATES_N[$IDX]=$n
         echo -e "  ${CYAN}[$((IDX+1))]${NC}  ${!NAME_VAR}  ${DIM}${!SID_VAR}${NC}"
         echo -e "       Route Table: ${!RT_VAR}"
