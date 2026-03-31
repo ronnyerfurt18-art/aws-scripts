@@ -385,6 +385,127 @@ delete_lb() {
     fi
 }
 
+# ─── Zielgruppen anzeigen ─────────────────────────────────────────────────────
+show_target_groups() {
+    echo -e "${BOLD}─── Zielgruppen (Target Groups) in $REGION ──────────${NC}"
+    echo ""
+
+    TG_LIST=$(aws elbv2 describe-target-groups \
+        --query "TargetGroups[].[TargetGroupName,TargetGroupArn,Protocol,Port,VpcId,HealthCheckPath]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ -z "$TG_LIST" ]; then
+        echo -e "  ${DIM}Keine Zielgruppen vorhanden.${NC}"; return
+    fi
+
+    while IFS=$'\t' read -r TGNAME TGARN TGPROTO TGPORT TGVPC TGHC; do
+        echo -e "  ${BOLD}$TGNAME${NC}  ${DIM}[$TGPROTO:$TGPORT  VPC: $TGVPC]${NC}"
+        echo -e "     Health-Check-Pfad: ${CYAN}$TGHC${NC}"
+
+        # Targets + Health-Status abfragen
+        HEALTH_RAW=$(aws elbv2 describe-target-health \
+            --target-group-arn "$TGARN" \
+            --query "TargetHealthDescriptions[].[Target.Id,TargetHealth.State,TargetHealth.Description]" \
+            --output text --region "$REGION" 2>/dev/null)
+
+        if [ -z "$HEALTH_RAW" ]; then
+            echo -e "     ${DIM}Keine Targets registriert.${NC}"
+        else
+            while IFS=$'\t' read -r TID TSTATE TDESC; do
+                case "$TSTATE" in
+                    healthy)   S="${GREEN}●${NC}" ;;
+                    unhealthy) S="${RED}●${NC}" ;;
+                    *)         S="${YELLOW}●${NC}" ;;
+                esac
+                TDESC_OUT="${TDESC:+  → $TDESC}"
+                echo -e "     $S $TID  ${DIM}$TSTATE$TDESC_OUT${NC}"
+            done <<< "$HEALTH_RAW"
+        fi
+        echo ""
+    done <<< "$TG_LIST"
+}
+
+# ─── Zielgruppe erstellen ─────────────────────────────────────────────────────
+create_target_group() {
+    echo -e "${BOLD}─── Zielgruppe erstellen ────────────────────────────${NC}"
+    echo ""
+    select_vpc || return
+
+    echo ""
+    read -rp "  Name [tg-lab]: " TG_NAME
+    TG_NAME="${TG_NAME:-tg-lab}"
+
+    echo ""
+    echo -e "  ${BOLD}Port-Konfiguration:${NC}"
+    echo -e "  ${DIM}Ziel-Port = Port auf der EC2-Instanz (z.B. 80 fuer httpd)${NC}"
+    read -rp "  Ziel-Port [80]: " TG_PORT
+    TG_PORT="${TG_PORT:-80}"
+
+    echo ""
+    echo -e "  ${DIM}Health-Check-Pfad: URL-Pfad den der LB zur Zustandspruefung aufruft${NC}"
+    read -rp "  Health-Check-Pfad [/]: " HC_PATH
+    HC_PATH="${HC_PATH:-/}"
+
+    echo ""
+    echo -e "${YELLOW}Zielgruppe erstellen...${NC}"
+    NEW_TG_ARN=$(aws elbv2 create-target-group \
+        --name "$TG_NAME" \
+        --protocol HTTP \
+        --port "$TG_PORT" \
+        --vpc-id "$VPC_ID" \
+        --target-type instance \
+        --health-check-path "$HC_PATH" \
+        --region "$REGION" \
+        --query "TargetGroups[0].TargetGroupArn" --output text 2>&1)
+
+    if [[ "$NEW_TG_ARN" != arn:* ]]; then
+        echo -e "${RED}Fehler: $NEW_TG_ARN${NC}"; return 1
+    fi
+    echo -e "  ${GREEN}✓ $TG_NAME${NC}  Port $TG_PORT  HC: $HC_PATH"
+    echo -e "  ARN: ${DIM}$NEW_TG_ARN${NC}"
+
+    # Instanzen registrieren
+    echo ""
+    echo -e "${YELLOW}Laufende Instanzen im VPC:${NC}"
+    INST_RAW=$(aws ec2 describe-instances \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=instance-state-name,Values=running" \
+        --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name']|[0].Value,PrivateIpAddress]" \
+        --output text --region "$REGION" 2>/dev/null)
+
+    INST_IDS_SEL=()
+    local IDX=0
+    if [ -n "$INST_RAW" ]; then
+        while IFS=$'\t' read -r IID INAME IIP; do
+            [ "$INAME" == "None" ] && INAME="$IID"
+            INST_IDS_SEL[$IDX]="$IID"
+            echo -e "  ${CYAN}[$((IDX+1))]${NC}  $INAME  ${DIM}$IIP  $IID${NC}"
+            (( IDX++ ))
+        done <<< "$INST_RAW"
+        echo ""
+        echo -e "  ${DIM}Nummern kommagetrennt, oder Enter fuer keine:${NC}"
+        read -rp "  Instanzen registrieren: " INST_SEL_INPUT
+
+        if [ -n "$INST_SEL_INPUT" ]; then
+            TARGETS=""
+            IFS=',' read -ra INST_PARTS <<< "$INST_SEL_INPUT"
+            for P in "${INST_PARTS[@]}"; do
+                P=$(echo "$P" | tr -d ' \r')
+                [[ "$P" =~ ^[0-9]+$ ]] && [ "$P" -ge 1 ] && [ "$P" -le "$IDX" ] \
+                    && TARGETS="$TARGETS Id=${INST_IDS_SEL[$((P-1))]}"
+            done
+            if [ -n "$TARGETS" ]; then
+                aws elbv2 register-targets \
+                    --target-group-arn "$NEW_TG_ARN" \
+                    --targets $TARGETS \
+                    --region "$REGION" > /dev/null
+                echo -e "  ${GREEN}✓ Targets registriert${NC}"
+            fi
+        fi
+    else
+        echo -e "  ${DIM}Keine laufenden Instanzen.${NC}"
+    fi
+}
+
 # ─── Hauptmenü ────────────────────────────────────────────────────────────────
 while true; do
     clear
@@ -394,10 +515,16 @@ while true; do
     echo ""
     echo -e "  Region: ${CYAN}$REGION${NC}"
     echo ""
+    echo -e "${BOLD}─── Load Balancer ───────────────────────────────────${NC}"
     echo -e "  ${CYAN}[1]${NC}  Load Balancer erstellen"
     echo -e "       ${DIM}→ VPC + Subnetze (mind. 2 AZs) + ALB + Target Group + Listener${NC}"
     echo -e "  ${CYAN}[2]${NC}  Load Balancer anzeigen"
     echo -e "  ${CYAN}[3]${NC}  Load Balancer loeschen"
+    echo ""
+    echo -e "${BOLD}─── Zielgruppen ─────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}[4]${NC}  Zielgruppen anzeigen  ${DIM}(inkl. Health-Status der Targets)${NC}"
+    echo -e "  ${CYAN}[5]${NC}  Zielgruppe erstellen  ${DIM}(standalone, ohne LB)${NC}"
+    echo ""
     echo -e "  ${CYAN}[0]${NC}  Zurueck"
     echo ""
     read -rp "Auswahl: " CHOICE
@@ -406,6 +533,8 @@ while true; do
         1) clear; create_lb; read -rp "Enter zum Fortfahren..." ;;
         2) clear; show_lbs; read -rp "Enter zum Fortfahren..." ;;
         3) clear; delete_lb; read -rp "Enter zum Fortfahren..." ;;
+        4) clear; show_target_groups; read -rp "Enter zum Fortfahren..." ;;
+        5) clear; create_target_group; read -rp "Enter zum Fortfahren..." ;;
         0) exit 0 ;;
         *) echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1 ;;
     esac
