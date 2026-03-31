@@ -178,6 +178,8 @@ while true; do
     echo -e "       ${DIM}→ 08_security-groups.sh  (Port 80 nachtraeglich aendern)${NC}"
     echo -e "  ${CYAN}[11]${NC} Network ACLs verwalten     ${DIM}(Subnetz-Ebene, stateless)${NC}"
     echo -e "       ${DIM}→ 09_network-acl.sh${NC}"
+    echo -e "  ${CYAN}[23]${NC} IGW-Route aus privatem Subnetz entfernen"
+    echo -e "       ${DIM}→ 15_remove-igw-route.sh  (nach httpd-Install + index.html)${NC}"
     echo ""
     echo -e "${BOLD}─── Informationen ───────────────────────────────────${NC}"
     echo -e "  ${CYAN}[12]${NC} IPs und Status aller Lab-Instanzen anzeigen"
@@ -243,6 +245,7 @@ while true; do
         20) bash "$SCRIPT_DIR/../s3-upload-datei.sh" ;;
         21) bash "$SCRIPT_DIR/05_teardown.sh" ;;
         22) bash "$SCRIPT_DIR/14_loadbalancer.sh" ;;
+        23) bash "$SCRIPT_DIR/15_remove-igw-route.sh" ;;
         r|R) clear; refresh_status; read -rp "Enter zum Fortfahren..." ; continue ;;
         0)  echo -e "${GREEN}Tschuess!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Ungueltige Auswahl.${NC}"; sleep 1; continue ;;
