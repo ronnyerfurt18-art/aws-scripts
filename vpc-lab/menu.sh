@@ -228,6 +228,8 @@ while true; do
     echo -e "${BOLD}─── Klausur / Demo ──────────────────────────────────${NC}"
     echo -e "  ${CYAN}[15]${NC} Zugriffstests fuer Screenshots"
     echo -e "       ${DIM}→ 06_demo-screenshot.sh${NC}"
+    echo -e "  ${CYAN}[24]${NC} ${YELLOW}API-Labor — REST-API Uebung (curl-Simulator)${NC}"
+    echo -e "       ${DIM}→ api-labor.sh  (Token holen → Aufgabe → Antwort senden)${NC}"
     echo ""
     echo -e "${BOLD}─── S3 ──────────────────────────────────────────────${NC}"
     echo -e "  ${CYAN}[16]${NC} S3 Bucket anlegen (mit public Policy)"
@@ -272,6 +274,7 @@ while true; do
         13) bash "$SCRIPT_DIR/11_lab-guide.sh" ;;
         14) bash "$SCRIPT_DIR/13_diagram.sh" ;;
         15) bash "$SCRIPT_DIR/06_demo-screenshot.sh" ;;
+        24) bash "$SCRIPT_DIR/api-labor.sh" ;;
         16) bash "$SCRIPT_DIR/../s3-create-bucket.sh" ;;
         17) bash "$SCRIPT_DIR/../s3-sync.sh" ;;
         18) bash "$SCRIPT_DIR/../s3-list-buckets.sh" ;;
