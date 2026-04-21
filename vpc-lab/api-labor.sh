@@ -15,8 +15,11 @@ NC='\033[0m'
 separator() { echo -e "${DIM}────────────────────────────────────────────────────${NC}"; }
 step()      { echo -e "\n${BOLD}${CYAN}$1${NC}"; }
 ask()       { read -rp "$(echo -e "  ${YELLOW}$1${NC} ")" "$2"; }
-ask_lower() { read -rp "$(echo -e "  ${YELLOW}$1${NC} ")" "$2"
-              eval "$2=\${$2,,}"; }
+ask_lower() {
+    read -rp "$(echo -e "  ${YELLOW}$1${NC} ")" _tmp_lower
+    _tmp_lower=$(echo "$_tmp_lower" | tr '[:upper:]' '[:lower:]')
+    eval "$2='$_tmp_lower'"
+}
 
 # ──────────────────────────────────────────────────────────────
 #  JSON-Hilfsfunktionen
@@ -229,23 +232,21 @@ main() {
         FINAL_URL="$BASE_URL"
         [ -n "$QUERY_STRING" ] && FINAL_URL="${BASE_URL}?${QUERY_STRING}"
 
-        CMD="curl -s -X $METHOD"
-        [ -n "$AUTH_HEADER"   ] && CMD+=" \\\n     -H \"$AUTH_HEADER\""
-        for h in "${EXTRA_HEADERS[@]}"; do
-            CMD+=" \\\n     -H \"$h\""
-        done
-        if [ -n "$JSON_BODY" ]; then
-            CMD+=" \\\n     -H \"Content-Type: application/json\""
-            CMD+=" \\\n     -d '$JSON_BODY'"
-        fi
-        CMD+=" \\\n     \"$FINAL_URL\""
-
         # ── Anzeigen ──────────────────────────────────────────
         echo ""
         separator
         echo -e "${BOLD}Generierter Befehl:${NC}"
         echo ""
-        echo -e "${CYAN}$(echo -e "$CMD")${NC}"
+        printf "${CYAN}curl -s -X %s" "$METHOD"
+        [ -n "$AUTH_HEADER" ] && printf " \\\n     -H \"%s\"" "$AUTH_HEADER"
+        for h in "${EXTRA_HEADERS[@]}"; do
+            printf " \\\n     -H \"%s\"" "$h"
+        done
+        if [ -n "$JSON_BODY" ]; then
+            printf " \\\n     -H \"Content-Type: application/json\""
+            printf " \\\n     -d '%s'" "$JSON_BODY"
+        fi
+        printf " \\\n     \"%s\"${NC}\n" "$FINAL_URL"
         separator
 
         # ── Ausführen ─────────────────────────────────────────
